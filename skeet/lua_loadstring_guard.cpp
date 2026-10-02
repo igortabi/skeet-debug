@@ -1,4 +1,11 @@
+#include "pch.h"
+
+
 #include "lua_loadstring_guard.hpp"
+#define DEBUG_DEBUG 0
+#ifndef DEBUG_DEBUG
+#define DEBUG_DEBUG 0
+#endif
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -56,6 +63,9 @@ namespace skeetsdk::lua_guard
         constexpr std::uintptr_t lj_debug_uvname_address = 0x4342B1B5u;
         constexpr std::uintptr_t lj_gc_barrierf_address = 0x43431E72u;
         constexpr std::uintptr_t lj_trace_flushall_address = 0x4342A819u;
+#if DEBUG_DEBUG
+        constexpr std::uintptr_t lual_loadbuffer_address = 0x43426D2Fu;
+#endif
 
         constexpr char default_info_options[] = "flnSu";
         constexpr char valid_info_options[] = "SlnufL";
@@ -182,24 +192,27 @@ namespace skeetsdk::lua_guard
         using SetFieldFn = void(__cdecl*)(void* lua_state, int index, const char* key);
         using PushStringFn = void(__cdecl*)(void* lua_state, const char* value);
         using SetTopFn = void(__cdecl*)(void* lua_state, int index);
-        using FindTableFn = const char*(__cdecl*)(void* lua_state, int index, const char* name, int size_hint);
+        using FindTableFn = const char* (__cdecl*)(void* lua_state, int index, const char* name, int size_hint);
         using GetStackFn = int(__cdecl*)(void* lua_state, int level, LuaDebug* debug);
         using GetInfoFn = int(__cdecl*)(void* lua_state, const char* options, LuaDebug* debug);
         using TypeFn = int(__cdecl*)(void* lua_state, int index);
         using PushValueFn = void(__cdecl*)(void* lua_state, int index);
         using RemoveFn = void(__cdecl*)(void* lua_state, int index);
         using PushNumberFn = void(__cdecl*)(void* lua_state, double value);
-        using ToLStringFn = const char*(__cdecl*)(void* lua_state, int index, std::size_t* length);
+        using ToLStringFn = const char* (__cdecl*)(void* lua_state, int index, std::size_t* length);
         using PushLStringFn = void(__cdecl*)(void* lua_state, const char* value, std::size_t length);
         using GetFieldFn = void(__cdecl*)(void* lua_state, int index, const char* key);
         using CallFn = void(__cdecl*)(void* lua_state, int argument_count, int result_count);
         using DispatchUpdateFn = void(__cdecl*)(void* global_state);
         using LuaHook = void(__cdecl*)(void* lua_state, LuaDebug* debug);
         using FramePcFn = std::uint32_t(__cdecl*)(void* lua_state, const void* function, const TValue* next_frame);
-        using VarNameFn = const char*(__cdecl*)(const void* proto, std::uint32_t pc, std::uint32_t slot);
-        using UpvalueNameFn = const char*(__cdecl*)(const void* proto, std::uint32_t index);
+        using VarNameFn = const char* (__cdecl*)(const void* proto, std::uint32_t pc, std::uint32_t slot);
+        using UpvalueNameFn = const char* (__cdecl*)(const void* proto, std::uint32_t index);
         using BarrierFn = void(__cdecl*)(void* global_state, void* owner, void* value);
         using FlushAllFn = int(__cdecl*)(void* lua_state);
+#if DEBUG_DEBUG
+        using LoadBufferFn = int(__cdecl*)(void* lua_state, const char* buffer, std::size_t size, const char* name);
+#endif
 
         struct InlineHook
         {
@@ -241,6 +254,9 @@ namespace skeetsdk::lua_guard
         const auto upvalue_name = reinterpret_cast<UpvalueNameFn>(lj_debug_uvname_address);
         const auto gc_barrier = reinterpret_cast<BarrierFn>(lj_gc_barrierf_address);
         const auto trace_flush_all = reinterpret_cast<FlushAllFn>(lj_trace_flushall_address);
+#if DEBUG_DEBUG
+        const auto load_buffer = reinterpret_cast<LoadBufferFn>(lual_loadbuffer_address);
+#endif
 
         bool IsReadable(const void* address, std::size_t size) noexcept
         {
@@ -1033,6 +1049,131 @@ namespace skeetsdk::lua_guard
             return 0;
         }
 
+#if DEBUG_DEBUG
+        // Console for debug.debug. The game has none, so one is allocated on first use and freed
+        // again on "cont". Its close button is removed: closing a console window kills the process.
+        class DebugConsole
+        {
+        public:
+            DebugConsole() noexcept
+            {
+                allocated_ = AllocConsole() != FALSE;
+                if (HWND window = GetConsoleWindow())
+                {
+                    DeleteMenu(GetSystemMenu(window, FALSE), SC_CLOSE, MF_BYCOMMAND);
+                    SetForegroundWindow(window);
+                }
+                SetConsoleCtrlHandler(&IgnoreControl, TRUE);
+                input_ = CreateFileA("CONIN$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    nullptr, OPEN_EXISTING, 0, nullptr);
+                output_ = CreateFileA("CONOUT$", GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                    nullptr, OPEN_EXISTING, 0, nullptr);
+            }
+
+            ~DebugConsole()
+            {
+                if (input_ != INVALID_HANDLE_VALUE) CloseHandle(input_);
+                if (output_ != INVALID_HANDLE_VALUE) CloseHandle(output_);
+                SetConsoleCtrlHandler(&IgnoreControl, FALSE);
+                if (allocated_) FreeConsole();
+            }
+
+            DebugConsole(const DebugConsole&) = delete;
+            DebugConsole& operator=(const DebugConsole&) = delete;
+
+            bool IsOpen() const noexcept
+            {
+                return input_ != INVALID_HANDLE_VALUE && output_ != INVALID_HANDLE_VALUE;
+            }
+
+            void Write(const char* text) const noexcept
+            {
+                DWORD written = 0;
+                WriteConsoleA(output_, text, static_cast<DWORD>(std::strlen(text)), &written, nullptr);
+            }
+
+            // Reads one line without its line ending. false on failure.
+            bool ReadLine(char* buffer, std::size_t size) const noexcept
+            {
+                DWORD read = 0;
+                if (!ReadConsoleA(input_, buffer, static_cast<DWORD>(size - 1), &read, nullptr) || read == 0)
+                    return false;
+                buffer[read] = '\0';
+                buffer[std::strcspn(buffer, "\r\n")] = '\0';
+                return true;
+            }
+
+        private:
+            static BOOL WINAPI IgnoreControl(DWORD) noexcept { return TRUE; }
+
+            bool allocated_{};
+            HANDLE input_{ INVALID_HANDLE_VALUE };
+            HANDLE output_{ INVALID_HANDLE_VALUE };
+        };
+
+        // Environment of the Lua function at `level`, or nullptr.
+        std::uint8_t* LevelEnvironment(void* lua_state, int level) noexcept
+        {
+            LuaDebug debug{};
+            if (get_stack(lua_state, level, &debug) == 0 || get_info(lua_state, "f", &debug) == 0)
+                return nullptr;
+            const TValue* function = StackTop(lua_state);
+            std::uint8_t** slot = EnvironmentSlot(*function);
+            std::uint8_t* environment = slot != nullptr ? *slot : nullptr;
+            set_top(lua_state, -2);
+            return environment;
+        }
+
+        // Runs one debug.debug command through the real _G.pcall, so errors are caught without
+        // lua_pcall (stripped from the image). Commands see the caller's environment.
+        void RunDebugCommand(void* lua_state, const DebugConsole& console, const char* line,
+            std::uint8_t* environment)
+        {
+            if (load_buffer(lua_state, line, std::strlen(line), "=(debug command)") == 0)
+            {
+                if (environment != nullptr)
+                {
+                    auto* chunk = reinterpret_cast<std::uint8_t*>(PointerValue(*StackTop(lua_state)));
+                    *reinterpret_cast<std::uint8_t**>(chunk + function_env_offset) = environment;
+                    ObjectBarrier(lua_state, chunk, environment);
+                }
+                if (find_table(lua_state, lua_registry_index, "_LOADED._G", 1) != nullptr)
+                {
+                    set_top(lua_state, -2);
+                    console.Write("(debug.debug: _G not found)\n");
+                    return;
+                }
+                get_field(lua_state, -1, "pcall");
+                remove_index(lua_state, -2);
+                push_value(lua_state, -2);
+                call(lua_state, 1, 2);
+                // Stack: chunk, ok, error. Only a false `ok` leaves a message to print.
+                if (StackTop(lua_state)[-1].type != itype_false) return;
+            }
+            const char* message = to_lstring(lua_state, -1, nullptr);
+            console.Write(message != nullptr ? message : "(error object is not a string)");
+            console.Write("\n");
+        }
+
+        // debug.debug(): interactive prompt in a console window until "cont". Blocks the calling
+        // (game) thread while waiting for input, like the stock version blocks on stdin.
+        int __cdecl NativeDebug(void* lua_state)
+        {
+            DebugConsole console;
+            if (!console.IsOpen()) return 0;
+            std::uint8_t* environment = LevelEnvironment(lua_state, 1);
+            for (;;)
+            {
+                char line[250]{};
+                console.Write("lua_debug> ");
+                if (!console.ReadLine(line, sizeof(line)) || std::strcmp(line, "cont") == 0)
+                    return 0;
+                RunDebugCommand(lua_state, console, line, environment);
+                set_top(lua_state, 0);
+            }
+        }
+#endif
+
         // Runs on every load instead of once per lua_State: a recreated state can reuse the old
         // address. Registers through registry._LOADED._G (the real _G) because scripts load while
         // setfenv(0, sandbox) is active, and the sandboxes fall back to _G via __index.
@@ -1070,6 +1211,10 @@ namespace skeetsdk::lua_guard
             set_field(lua_state, -2, "setfenv");
             push_cclosure(lua_state, &NativeGetRegistry, 0);
             set_field(lua_state, -2, "getregistry");
+#if DEBUG_DEBUG
+            push_cclosure(lua_state, &NativeDebug, 0);
+            set_field(lua_state, -2, "debug");
+#endif
             if (find_table(lua_state, lua_registry_index, "_LOADED", 16) == nullptr)
             {
                 push_value(lua_state, -2);
@@ -1102,32 +1247,32 @@ namespace skeetsdk::lua_guard
         if (hook_state.installed) return hook_state.load_hook.target == target;
 
         auto install_one = [](InlineHook& hook, std::uintptr_t address, const void* replacement) noexcept
-        {
-            const std::size_t patch_size = address == lua_load_address ? load_patch_size : 0;
-            auto* target_bytes = reinterpret_cast<std::uint8_t*>(address);
-            if (patch_size == 0 || !IsExpectedCode(target_bytes, load_prologue.data(), load_prologue.size())) return false;
-            auto* trampoline = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, patch_size + 5,
-                MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
-            if (trampoline == nullptr) return false;
-            std::memcpy(hook.original_bytes.data(), target_bytes, patch_size);
-            std::memcpy(trampoline, target_bytes, patch_size);
-            WriteJump(trampoline + patch_size, target_bytes + patch_size);
-            DWORD old_protection{};
-            if (!VirtualProtect(target_bytes, patch_size, PAGE_EXECUTE_READWRITE, &old_protection))
             {
-                VirtualFree(trampoline, 0, MEM_RELEASE);
-                return false;
-            }
-            WriteJump(target_bytes, replacement);
-            if (patch_size > 5) std::memset(target_bytes + 5, 0x90, patch_size - 5);
-            DWORD ignored{};
-            VirtualProtect(target_bytes, patch_size, old_protection, &ignored);
-            FlushInstructionCache(GetCurrentProcess(), target_bytes, patch_size);
-            hook.target = address;
-            hook.patch_size = patch_size;
-            hook.trampoline = trampoline;
-            return true;
-        };
+                const std::size_t patch_size = address == lua_load_address ? load_patch_size : 0;
+                auto* target_bytes = reinterpret_cast<std::uint8_t*>(address);
+                if (patch_size == 0 || !IsExpectedCode(target_bytes, load_prologue.data(), load_prologue.size())) return false;
+                auto* trampoline = static_cast<std::uint8_t*>(VirtualAlloc(nullptr, patch_size + 5,
+                    MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE));
+                if (trampoline == nullptr) return false;
+                std::memcpy(hook.original_bytes.data(), target_bytes, patch_size);
+                std::memcpy(trampoline, target_bytes, patch_size);
+                WriteJump(trampoline + patch_size, target_bytes + patch_size);
+                DWORD old_protection{};
+                if (!VirtualProtect(target_bytes, patch_size, PAGE_EXECUTE_READWRITE, &old_protection))
+                {
+                    VirtualFree(trampoline, 0, MEM_RELEASE);
+                    return false;
+                }
+                WriteJump(target_bytes, replacement);
+                if (patch_size > 5) std::memset(target_bytes + 5, 0x90, patch_size - 5);
+                DWORD ignored{};
+                VirtualProtect(target_bytes, patch_size, old_protection, &ignored);
+                FlushInstructionCache(GetCurrentProcess(), target_bytes, patch_size);
+                hook.target = address;
+                hook.patch_size = patch_size;
+                hook.trampoline = trampoline;
+                return true;
+            };
 
         if (!install_one(hook_state.load_hook, target, reinterpret_cast<const void*>(&GuardedLoad))) return false;
         hook_state.original_load = reinterpret_cast<LoadFn>(hook_state.load_hook.trampoline);
@@ -1140,20 +1285,20 @@ namespace skeetsdk::lua_guard
         std::scoped_lock lock(hook_state.mutex);
         if (!hook_state.installed) return;
         auto remove_one = [](InlineHook& hook) noexcept
-        {
-            if (hook.target == 0) return;
-            auto* target = reinterpret_cast<std::uint8_t*>(hook.target);
-            DWORD old_protection{};
-            if (VirtualProtect(target, hook.patch_size, PAGE_EXECUTE_READWRITE, &old_protection))
             {
-                std::memcpy(target, hook.original_bytes.data(), hook.patch_size);
-                DWORD ignored{};
-                VirtualProtect(target, hook.patch_size, old_protection, &ignored);
-                FlushInstructionCache(GetCurrentProcess(), target, hook.patch_size);
-            }
-            if (hook.trampoline != nullptr) VirtualFree(hook.trampoline, 0, MEM_RELEASE);
-            hook = {};
-        };
+                if (hook.target == 0) return;
+                auto* target = reinterpret_cast<std::uint8_t*>(hook.target);
+                DWORD old_protection{};
+                if (VirtualProtect(target, hook.patch_size, PAGE_EXECUTE_READWRITE, &old_protection))
+                {
+                    std::memcpy(target, hook.original_bytes.data(), hook.patch_size);
+                    DWORD ignored{};
+                    VirtualProtect(target, hook.patch_size, old_protection, &ignored);
+                    FlushInstructionCache(GetCurrentProcess(), target, hook.patch_size);
+                }
+                if (hook.trampoline != nullptr) VirtualFree(hook.trampoline, 0, MEM_RELEASE);
+                hook = {};
+            };
         remove_one(hook_state.load_hook);
         hook_state.original_load = nullptr;
         hook_state.installed = false;
