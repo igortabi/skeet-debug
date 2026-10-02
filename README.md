@@ -1,0 +1,1 @@
+this project was made with AI. its basic skeet crack from https://github.com/sdkmasteri/skeet/tree/master but with debug lib. only thing i didnt not add was debug.debug bc i think its too dangerous and useless ( i mean its dangerous bc it could help crack some luas but idc, if yall will want i can add it)

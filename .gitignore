@@ -1,0 +1,9 @@
+.vs/
+x64/
+Release/
+Debug/
+/build/
+*.obj
+*.aps
+*.pch
+/skeet/Binary/skeet.bin.bak
