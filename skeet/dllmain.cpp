@@ -1,6 +1,8 @@
 ﻿#include "pch.h"
 #include "skCrypter.h"
 #include "lua_loadstring_guard.hpp"
+#include "config_scripts.hpp"
+#include "ui_tabs.hpp"
 
 static void thread(HMODULE base) {
 #ifdef DLOG
@@ -12,6 +14,12 @@ static void thread(HMODULE base) {
     while (GetModuleHandleA("serverbrowser.dll") == 0);
     skeet->fix_imports();
     std::cout << skCrypt("[INFO] fixed!\n");
+    // These patch code inside the range the cheat CRC-checks (0x4331E000, size 0x105B12).
+    // extra() -> recompile() bakes the CRC of that range into the VM, so patch before it runs.
+    if (!skeetsdk::config_scripts::Install())
+        std::cout << skCrypt("[INFO] failed to install config scripts\n");
+    if (!skeetsdk::ui_tabs::Install())
+        std::cout << skCrypt("[INFO] failed to install ui tabs\n");
     skeet->extra();
     if (!skeetsdk::lua_guard::Install())
         std::cout << skCrypt("[INFO] failed to install lua guard\n");

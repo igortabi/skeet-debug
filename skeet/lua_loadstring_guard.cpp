@@ -1,5 +1,6 @@
 #include "lua_loadstring_guard.hpp"
 #include "pch.h"
+#include "ui_tabs.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -1109,6 +1110,7 @@ namespace skeetsdk::lua_guard
         {
             RegisterDebug(lua_state);
             RegisterBuildInfo(lua_state);
+            ui_tabs::RegisterLuaApi(lua_state);
             const LoadFn original = hook_state.original_load;
             return original != nullptr ? original(lua_state, reader, data, chunk_name, mode) : 1;
         }

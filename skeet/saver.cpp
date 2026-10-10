@@ -1,11 +1,15 @@
 #include "pch.h"
 #include "SkeetSDK/skeetsdk.h"
+#include "ui_tabs.hpp"
 
 using namespace SkeetSDK;
 
 static void load_settings()
 {
     InitAndWaitForSkeet();
+    // The menu is built and nobody is clicking yet: the only safe moment to make room for
+    // script-made tabs (see ui_tabs.hpp).
+    skeetsdk::ui_tabs::ReserveTabSlots(Menu);
 
     HKEY regkey;
     if (RegOpenKeyW(HKEY_CURRENT_USER, L"SOFTWARE", &regkey) != ERROR_SUCCESS) return;
