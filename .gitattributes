@@ -1,0 +1,7 @@
+# Same bytes in every checkout, so release builds are reproducible whatever core.autocrlf is.
+* text=auto eol=crlf
+
+# Embedded into skeet.dll by skeet.rc: never convert, the DLL contains these bytes as-is.
+*.bin binary
+skeet/Binary/*.json -text
+skeet/VM/*.json -text
