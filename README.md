@@ -2,17 +2,22 @@ this project was made with AI. its basic skeet crack from https://github.com/sdk
 
 ## Verifying a release
 
-Release builds are reproducible: the same commit built with the same Visual Studio toolset gives a byte-identical `skeet.dll`, no matter which folder you build in. So you don't have to trust the DLL from the releases page, you can check it:
+Release builds are reproducible: the same commit built with the same Visual Studio toolset and Windows SDK gives a byte-identical `skeet.dll`, no matter which folder you build in. So you don't have to trust the DLL from the releases page, you can check it:
 
 1. Check out the commit or tag the release was built from.
-2. Build `Release | x86` with Visual Studio 2026 (toolset v145).
+2. Build `Release | x86` with Visual Studio 2026 (toolset v145) and the Windows SDK named in the release notes (10.0.26100.0 for v1.1.1). In Visual Studio set it in the project's Windows SDK Version, or from a developer prompt:
+
+```
+msbuild skeet.sln /p:Configuration=Release /p:Platform=x86 /p:WindowsTargetPlatformVersion=10.0.26100.0
+```
+
 3. Compare hashes:
 
 ```
 certutil -hashfile Release\skeet.dll SHA256
 ```
 
-The hash should match the one published with the release. If your toolset version differs from the one used for the release, the hash can differ too.
+The hash should match the one published with the release. If your toolset or Windows SDK version differs from the one used for the release (a newer SDK is picked by default), the hash can differ too.
 
 What makes this work (see `Directory.Build.targets`): `/Brepro` replaces timestamps with content hashes, `/pathmap` and `/PDBALTPATH` keep your folder paths out of the binary, and `skCrypt` derives its keys from `__LINE__` instead of `__TIME__`.
 
