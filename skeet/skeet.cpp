@@ -59,6 +59,23 @@ std::uint8_t* PatternScan(void* module, const char* signature)
   return nullptr;
 }
 
+static bool PatchOverlayCallSlots(std::uint8_t* image, size_t imageSize) {
+    // Match the working reference's two overlay-object virtual calls.
+    struct CallSlot { size_t offset; std::uint8_t oldSlot; std::uint8_t newSlot; };
+    const CallSlot calls[] = { { 0x741A7, 0x24, 0x28 }, { 0x741BC, 0x28, 0x2C } };
+    if (!image) return false;
+    // Validate both instructions before changing either displacement.
+    for (const auto& call : calls) {
+        if (call.offset > imageSize || imageSize - call.offset < 3
+            || image[call.offset] != 0xFF || image[call.offset + 1] != 0x50
+            || (image[call.offset + 2] != call.oldSlot && image[call.offset + 2] != call.newSlot)) {
+            return false;
+        }
+    }
+    for (const auto& call : calls) image[call.offset + 2] = call.newSlot;
+    return true;
+}
+
 static bool handle_int3(CONTEXT* ctx, ctx_t* dump_ctx) {
     auto skeet = skeet_t::getInstance();
 
@@ -704,19 +721,26 @@ bool skeet_t::extra()
 
     *(uint32_t*)0x4346A898 = ((uint32_t)GetModuleHandleA("client.dll") + 0xDF98A0);
     
-    uint32_t ret_addr = (uint32_t)PatternScan(GetModuleHandleA("gameoverlayrenderer.dll"), "3D ? ? ? ? 73 ? 68 ? ? ? ? E8 ? ? ? ? 8B 0D ? ? ? ? 83 C4 ? ? ? 6A ? FF 50 ? 3B 5F");
+    HMODULE overlay = GetModuleHandleA("gameoverlayrenderer.dll");
+    if (!overlay) return false;
+    uint32_t ret_addr = (uint32_t)PatternScan(overlay, "3D ? ? ? ? 73 ? 68 ? ? ? ? E8 ? ? ? ? 8B 0D ? ? ? ? 83 C4 ? ? ? 6A ? FF 50 ? 3B 5F");
     if (!ret_addr)
-        ret_addr = (uint32_t)PatternScan(GetModuleHandleA("gameoverlayrenderer.dll"), "3D ? ? ? ? 73 1A 68 ? ? ? ? E8 ? ? ? ? 8B 0D ? ? ? ? 83 C4 04 8B 01 6A 00 FF 50 14 3B 7B 3C");
+        ret_addr = (uint32_t)PatternScan(overlay, "3D ? ? ? ? 73 1A 68 ? ? ? ? E8 ? ? ? ? 8B 0D ? ? ? ? 83 C4 04 8B 01 6A 00 FF 50 14 3B ?? 3C");
     
-    *(uint32_t*)0x43468D94 = ret_addr;
+    if (!ret_addr) return false;
 
     uint32_t xref = (uint32_t)PatternScan(GetModuleHandleA("gameoverlayrenderer.dll"), "89 3D ? ? ? ? F3 0F 10 87");
 
     if (!xref)
         xref = (uint32_t)PatternScan(GetModuleHandleA("gameoverlayrenderer.dll"), "89 1D ? ? ? ? F3 0F 10 83");
 
-    if (!xref)
+    if (!xref) {
         MessageBoxW(0, L"failed to find pattern[0]", L"error", 0);
+        return false;
+    }
+
+    if (!PatchOverlayCallSlots((std::uint8_t*)(uintptr_t)_base, _size)) return false;
+    *(uint32_t*)0x43468D94 = ret_addr;
 
     *(uint32_t*)0x43468350 = *(uint32_t*)(xref + 2);
 
