@@ -66,7 +66,6 @@ namespace skeetsdk::ui_tabs
         constexpr std::size_t menu_current_tab = 0x64;
         constexpr std::size_t tab_index_offset = 0x0C;
         constexpr unsigned lua_tab_index = 8;
-        constexpr int tab_icon_step = 64;                              // vertical distance between tab icons
 
         // push ebx/ebp/esi/edi after sub esp, 2Ch: whole instructions, nothing position dependent.
         constexpr std::array<std::uint8_t, 7> lua_teardown_prologue{ 0x83, 0xEC, 0x2C, 0x53, 0x55, 0x56, 0x57 };
@@ -74,17 +73,19 @@ namespace skeetsdk::ui_tabs
 
         constexpr std::size_t tab_object_size = 0x98;
         constexpr std::size_t child_object_size = 0xC8;
+        constexpr std::size_t vtable_apply_scale = 10;                 // ITab: Size = DefSize at the menu's scale
         constexpr std::size_t vtable_reset_layout = 14;                // ITab::ResetLayout
 
         constexpr std::size_t menu_tabs_begin = 0x54;
         constexpr std::size_t menu_tabs_end = 0x58;
         constexpr std::size_t object_name = 0x38;                      // shared_ptr<XorW> of tabs and children
         constexpr std::size_t tab_pos = 0x20;
+        constexpr std::size_t tab_size = 0x28;                         // {width, height} of the tab's cell in the bar
         constexpr std::size_t tab_childs_begin = 0x70;
         constexpr std::size_t tab_childs_end = 0x74;
         // TabIcon, read by the tab draw routine: the texture id (-1 draws the tab's name as text, like
         // the built-in LUA tab), then the source rectangle {x, y, width, height} of that texture, drawn
-        // centered in the tab's 75 x 64 cell. A zero size draws nothing.
+        // centered in the tab's cell. A zero size draws nothing.
         constexpr std::size_t tab_icon_texture_id = 0x80;
         constexpr std::size_t tab_icon_source = 0x84;
         constexpr int tab_icon_pixels = 48;                            // size of the built-in icons
@@ -354,6 +355,13 @@ namespace skeetsdk::ui_tabs
             (*reinterpret_cast<VirtualFn**>(tab))[vtable_reset_layout](tab);
         }
 
+        // The constructor leaves the unscaled default size (75 x 64). The menu runs this for every tab
+        // it lays out, which sets Size from DefSize at the current scale (80 px high at 125%).
+        void ApplyScale(void* tab) noexcept
+        {
+            (*reinterpret_cast<VirtualFn**>(tab))[vtable_apply_scale](tab);
+        }
+
         // The menu and the tabs keep their children in {first, last, end} vectors of pointers.
         // A vector must never reallocate while the menu walks it: a script is loaded by a click, and
         // that click is dispatched from inside a loop over Menu->Tabs (and over the clicked tab's
@@ -422,14 +430,21 @@ namespace skeetsdk::ui_tabs
             return At<int>(tab, tab_pos + 4);
         }
 
+        // The distance between two icons in the bar is the height of a tab's cell, which follows the
+        // menu's scale; a fixed 64 only fits 100%.
+        int TabStep(void* tab) noexcept
+        {
+            return std::max(At<int>(tab, tab_size + 4), 1);
+        }
+
         // Icon y for a new tab that goes `place` (1-based) from the top of the bar, or at the bottom when
-        // `place` is empty or past the last tab. Tabs from that slot down move one step lower.
-        int MakeRoomInTabBar(void* menu, std::optional<unsigned> place) noexcept
+        // `place` is empty or past the last tab. Tabs from that slot down move one `step` lower.
+        int MakeRoomInTabBar(void* menu, std::optional<unsigned> place, int step) noexcept
         {
             int bottom = std::numeric_limits<int>::min();
             std::size_t count = 0;
             ForEachTab(menu, [&](void* tab) { bottom = std::max(bottom, IconY(tab)); ++count; });
-            if (!place || *place > count) return bottom + tab_icon_step;
+            if (!place || *place > count) return bottom + step;
 
             int slot = bottom; // the y with exactly place - 1 icons above it
             ForEachTab(menu, [&](void* tab)
@@ -438,7 +453,7 @@ namespace skeetsdk::ui_tabs
                 ForEachTab(menu, [&](void* other) { if (IconY(other) < IconY(tab)) ++above; });
                 if (above == *place - 1) slot = IconY(tab);
             });
-            ForEachTab(menu, [&](void* tab) { if (IconY(tab) >= slot) IconY(tab) += tab_icon_step; });
+            ForEachTab(menu, [&](void* tab) { if (IconY(tab) >= slot) IconY(tab) += step; });
             return slot;
         }
 
@@ -473,13 +488,14 @@ namespace skeetsdk::ui_tabs
             if (current == index) tab_switch(menu, lua_tab_index);
 
             const int removed_y = IconY(tab);
+            const int step = TabStep(tab);
             std::memmove(slot, slot + sizeof(void*), static_cast<std::size_t>(last - (slot + sizeof(void*))));
             last -= sizeof(void*);
             if (current > index) --current;
 
             for (auto* p = slot; p + sizeof(void*) <= last; p += sizeof(void*))
                 At<int>(*reinterpret_cast<void**>(p), tab_index_offset) = static_cast<int>((p - first) / sizeof(void*));
-            ForEachTab(menu, [&](void* below) { if (IconY(below) > removed_y) IconY(below) -= tab_icon_step; });
+            ForEachTab(menu, [&](void* below) { if (IconY(below) > removed_y) IconY(below) -= step; });
         }
 
         void RemoveScriptTabs() noexcept
@@ -582,13 +598,17 @@ namespace skeetsdk::ui_tabs
             void* tab = alloc(tab_object_size);
             if (tab == nullptr) return Status::NoMemory;
 
-            // The icon goes in the bar's column, either below the last icon (the builder's running
-            // position) or in the slot asked for, with the icons below it moved down.
+            // The icon goes in the bar's column; its y is set once the tab knows its scaled height.
             auto* last_slot = At<std::uint8_t*>(menu, menu_tabs_end) - sizeof(void*);
             void* last_tab = *reinterpret_cast<void**>(last_slot);
-            int position[2] = { At<int>(last_tab, tab_pos), MakeRoomInTabBar(menu, options.place) };
+            int position[2] = { At<int>(last_tab, tab_pos), 0 };
 
             tab_constructor(tab, menu, wide_name.c_str(), position);
+            // Scale the tab like the menu scales the others, so its cell is as tall as theirs and the
+            // icons are spaced evenly at any scale. Then either go below the last icon or take the slot
+            // asked for and move the icons below it down.
+            ApplyScale(tab);
+            IconY(tab) = MakeRoomInTabBar(menu, options.place, TabStep(tab));
             // Nobody walks this tab's children yet, so it can be given room for later containers.
             ReservePointers(tab, tab_childs_begin, container_slots_reserved);
             insert_tab(menu, tab);
