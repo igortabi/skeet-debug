@@ -57,13 +57,14 @@ Configs saved without this carry no list and leave your scripts alone. The list 
 
 ```lua
 skeetsdk.new_tab("MYTAB")                           -- a tab with two columns, "A" and "B"
+-- skeetsdk.new_tab("MYTAB", renderer.load_svg(svg, 48, 48), true, "first")  -- with an icon, at the top of the tab bar
 ui.new_checkbox("MYTAB", "A", "hello")
 ui.new_slider("MYTAB", "B", "slider", 0, 100, 50)
 ```
 
 | Function | |
 |---|---|
-| `skeetsdk.new_tab(name [, columns])` | creates a tab; `columns = false` makes it empty. Returns `true` if created, `false` if a tab with that name exists, or `nil, message` |
+| `skeetsdk.new_tab(name [, icon [, columns [, position]]])` | creates a tab. `icon` is a texture id from `renderer.load_*`; the tab bar draws its top-left 48 x 48 pixels, so load it at 48 x 48. Without an icon the bar writes the tab's name, like the LUA tab, so keep it short (a long name spills out of the bar). `columns = false` makes the tab empty. `position` is where it goes in the tab bar: a number from 1 (the very top, above RAGE), `"first"` or `"last"` (default); the tabs below it, built-in ones included, move down one slot. A boolean as the 2nd argument still counts as `columns`. Returns `true` if created, `false` if a tab with that name exists, or `nil, message` |
 | `skeetsdk.new_container(tab, name [, x, width, y, height])` | adds a container to a tab made by `new_tab`. A tab is 24 x 24 blocks; defaults fill it |
 
 Names are matched exactly by `ui.new_*`. Call these when the script loads. Loading, unloading or reloading any script closes the Lua state and runs the remaining scripts again, so a tab disappears with its script and is made again by the scripts that are still loaded. There is room for 7 script tabs.

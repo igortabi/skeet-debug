@@ -8,6 +8,7 @@
 #endif
 #include <Windows.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstddef>
@@ -15,6 +16,7 @@
 #include <cstring>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -76,13 +78,16 @@ namespace skeetsdk::ui_tabs
 
         constexpr std::size_t menu_tabs_begin = 0x54;
         constexpr std::size_t menu_tabs_end = 0x58;
-        constexpr std::size_t menu_lua_tab = 0xD4;                     // TabsArr[LUA]
         constexpr std::size_t object_name = 0x38;                      // shared_ptr<XorW> of tabs and children
         constexpr std::size_t tab_pos = 0x20;
         constexpr std::size_t tab_childs_begin = 0x70;
         constexpr std::size_t tab_childs_end = 0x74;
-        constexpr std::size_t tab_icon_begin = 0x7C;                   // TabIcon: texture id/offset/size
-        constexpr std::size_t tab_icon_end = 0x94;
+        // TabIcon, read by the tab draw routine: the texture id (-1 draws the tab's name as text, like
+        // the built-in LUA tab), then the source rectangle {x, y, width, height} of that texture, drawn
+        // centered in the tab's 75 x 64 cell. A zero size draws nothing.
+        constexpr std::size_t tab_icon_texture_id = 0x80;
+        constexpr std::size_t tab_icon_source = 0x84;
+        constexpr int tab_icon_pixels = 48;                            // size of the built-in icons
         constexpr std::size_t name_buffer_size = 128;                  // bytes, what name_to_wide wants
         constexpr std::size_t max_name_bytes = 63;
         constexpr int tab_blocks = 24;
@@ -214,6 +219,46 @@ namespace skeetsdk::ui_tabs
             std::memcpy(&number, argument, sizeof(number));
             if (!std::isfinite(number) || number < 0.0 || number > tab_blocks) return false;
             value = static_cast<int>(number);
+            return true;
+        }
+
+        // Optional texture id (a whole number >= 0): absent / nil leaves `value` empty.
+        bool ReadTextureId(void* lua_state, int index, std::optional<int>& value) noexcept
+        {
+            const TValue* argument = Argument(lua_state, index);
+            if (argument == nullptr || argument->type == -1 /* nil */) return true;
+            if (get_type(lua_state, index) != lua_type_number) return false;
+            double number = 0.0;
+            std::memcpy(&number, argument, sizeof(number));
+            if (!std::isfinite(number) || number < 0.0 || number != std::floor(number)
+                || number > static_cast<double>(std::numeric_limits<int>::max()))
+                return false;
+            value = static_cast<int>(number);
+            return true;
+        }
+
+        // Optional place in the tab bar: a whole number >= 1, "first" or "last". Absent / nil / "last"
+        // leaves `value` empty, which means the bottom.
+        bool ReadTabPlace(void* lua_state, int index, std::optional<unsigned>& value) noexcept
+        {
+            const TValue* argument = Argument(lua_state, index);
+            if (argument == nullptr || argument->type == -1 /* nil */) return true;
+            const int type = get_type(lua_state, index);
+            if (type == lua_type_string)
+            {
+                std::size_t length = 0;
+                const char* text = to_lstring(lua_state, index, &length);
+                if (text == nullptr) return false;
+                if (length == 5 && std::memcmp(text, "first", 5) == 0) { value = 1; return true; }
+                return length == 4 && std::memcmp(text, "last", 4) == 0;
+            }
+            if (type != lua_type_number) return false;
+            double number = 0.0;
+            std::memcpy(&number, argument, sizeof(number));
+            if (!std::isfinite(number) || number < 1.0 || number != std::floor(number)
+                || number > static_cast<double>(std::numeric_limits<int>::max()))
+                return false;
+            value = static_cast<unsigned>(number);
             return true;
         }
 
@@ -353,6 +398,50 @@ namespace skeetsdk::ui_tabs
         constexpr std::size_t tab_slots_reserved = 16;
         constexpr std::size_t container_slots_reserved = 8;
 
+        // --- the tab bar ----------------------------------------------------------------------------
+
+        // The bar draws every tab's icon at the tab's own position, one step below the previous one.
+        // The Menu->Tabs vector only decides tab numbers and navigation order, so putting a tab at the
+        // top or in the middle of the bar means moving icon positions, never reordering the vector:
+        // the game indexes that vector and walks it while a click is being handled, and shifting a
+        // built-in tab's slot there is not safe.
+        template <typename Visit>
+        void ForEachTab(void* menu, Visit visit) noexcept
+        {
+            const auto* first = At<std::uint8_t*>(menu, menu_tabs_begin);
+            const auto* last = At<std::uint8_t*>(menu, menu_tabs_end);
+            if (first == nullptr || last < first) return;
+            for (const auto* slot = first; slot + sizeof(void*) <= last; slot += sizeof(void*))
+            {
+                if (void* tab = *reinterpret_cast<void* const*>(slot)) visit(tab);
+            }
+        }
+
+        int& IconY(void* tab) noexcept
+        {
+            return At<int>(tab, tab_pos + 4);
+        }
+
+        // Icon y for a new tab that goes `place` (1-based) from the top of the bar, or at the bottom when
+        // `place` is empty or past the last tab. Tabs from that slot down move one step lower.
+        int MakeRoomInTabBar(void* menu, std::optional<unsigned> place) noexcept
+        {
+            int bottom = std::numeric_limits<int>::min();
+            std::size_t count = 0;
+            ForEachTab(menu, [&](void* tab) { bottom = std::max(bottom, IconY(tab)); ++count; });
+            if (!place || *place > count) return bottom + tab_icon_step;
+
+            int slot = bottom; // the y with exactly place - 1 icons above it
+            ForEachTab(menu, [&](void* tab)
+            {
+                std::size_t above = 0;
+                ForEachTab(menu, [&](void* other) { if (IconY(other) < IconY(tab)) ++above; });
+                if (above == *place - 1) slot = IconY(tab);
+            });
+            ForEachTab(menu, [&](void* tab) { if (IconY(tab) >= slot) IconY(tab) += tab_icon_step; });
+            return slot;
+        }
+
         // --- removing tabs --------------------------------------------------------------------------
 
         // The menu, unless the game already destroyed it (it clears the global when it does).
@@ -365,7 +454,7 @@ namespace skeetsdk::ui_tabs
 
         // Takes the tab out of Menu->Tabs. The tab and its containers are leaked on purpose: nothing
         // may be left pointing at freed memory, and it is a few hundred bytes. Later tabs are
-        // renumbered and moved up in the tab bar, which is how they were placed in the first place.
+        // renumbered, and the tabs below it in the bar move up to close the gap.
         void RemoveTab(void* menu, void* tab) noexcept
         {
             auto& first = At<std::uint8_t*>(menu, menu_tabs_begin);
@@ -383,16 +472,14 @@ namespace skeetsdk::ui_tabs
             // Leave it while it is still in the list, so the game closes it properly.
             if (current == index) tab_switch(menu, lua_tab_index);
 
+            const int removed_y = IconY(tab);
             std::memmove(slot, slot + sizeof(void*), static_cast<std::size_t>(last - (slot + sizeof(void*))));
             last -= sizeof(void*);
             if (current > index) --current;
 
             for (auto* p = slot; p + sizeof(void*) <= last; p += sizeof(void*))
-            {
-                void* later = *reinterpret_cast<void**>(p);
-                At<int>(later, tab_index_offset) = static_cast<int>((p - first) / sizeof(void*));
-                At<int>(later, tab_pos + 4) -= tab_icon_step;
-            }
+                At<int>(*reinterpret_cast<void**>(p), tab_index_offset) = static_cast<int>((p - first) / sizeof(void*));
+            ForEachTab(menu, [&](void* below) { if (IconY(below) > removed_y) IconY(below) -= tab_icon_step; });
         }
 
         void RemoveScriptTabs() noexcept
@@ -477,7 +564,14 @@ namespace skeetsdk::ui_tabs
 
         enum class Status { Created, Exists, NoMenu, NoSlot, NoMemory };
 
-        Status CreateTab(const std::string& name, const std::wstring& wide_name, bool default_columns)
+        struct TabOptions
+        {
+            std::optional<int> icon;            // texture id, else the LUA tab's icon
+            bool default_columns = true;        // columns "A" and "B"
+            std::optional<unsigned> place;      // 1-based from the top of the tab bar, else last
+        };
+
+        Status CreateTab(const std::string& name, const std::wstring& wide_name, const TabOptions& options)
         {
             void* menu = Menu();
             if (menu == nullptr || At<std::uint8_t*>(menu, menu_tabs_begin) == At<std::uint8_t*>(menu, menu_tabs_end))
@@ -485,24 +579,32 @@ namespace skeetsdk::ui_tabs
             if (FindTab(menu, wide_name) != nullptr) return Status::Exists;
             if (SpareSlots(menu, menu_tabs_begin) < 1) return Status::NoSlot; // see SpareSlots
 
-            // Next icon slot: right below the last tab, like the builder's running position.
-            auto* last_slot = At<std::uint8_t*>(menu, menu_tabs_end) - sizeof(void*);
-            void* last_tab = *reinterpret_cast<void**>(last_slot);
-            int position[2] = { At<int>(last_tab, tab_pos), At<int>(last_tab, tab_pos + 4) + 64 };
-
             void* tab = alloc(tab_object_size);
             if (tab == nullptr) return Status::NoMemory;
+
+            // The icon goes in the bar's column, either below the last icon (the builder's running
+            // position) or in the slot asked for, with the icons below it moved down.
+            auto* last_slot = At<std::uint8_t*>(menu, menu_tabs_end) - sizeof(void*);
+            void* last_tab = *reinterpret_cast<void**>(last_slot);
+            int position[2] = { At<int>(last_tab, tab_pos), MakeRoomInTabBar(menu, options.place) };
+
             tab_constructor(tab, menu, wide_name.c_str(), position);
             // Nobody walks this tab's children yet, so it can be given room for later containers.
             ReservePointers(tab, tab_childs_begin, container_slots_reserved);
             insert_tab(menu, tab);
 
-            // Same icon as the LUA tab, so the tab bar has something valid to draw.
-            if (void* lua_tab = At<void*>(menu, menu_lua_tab))
-                std::memcpy(static_cast<std::uint8_t*>(tab) + tab_icon_begin,
-                    static_cast<std::uint8_t*>(lua_tab) + tab_icon_begin, tab_icon_end - tab_icon_begin);
+            // The constructor leaves texture id -1, so the bar writes the tab's name. A script's texture
+            // replaces that and needs its source rectangle too: the whole 48 x 48 texture.
+            if (options.icon)
+            {
+                At<int>(tab, tab_icon_texture_id) = *options.icon;
+                At<int>(tab, tab_icon_source) = 0;
+                At<int>(tab, tab_icon_source + 4) = 0;
+                At<int>(tab, tab_icon_source + 8) = tab_icon_pixels;
+                At<int>(tab, tab_icon_source + 12) = tab_icon_pixels;
+            }
 
-            if (default_columns)
+            if (options.default_columns)
             {
                 AddContainer(tab, L"A", Layout(0, 12, 0, tab_blocks));
                 AddContainer(tab, L"B", Layout(12, 12, 0, tab_blocks));
@@ -521,10 +623,20 @@ namespace skeetsdk::ui_tabs
                 std::wstring wide_name;
                 if (!ReadString(lua_state, 1, name) || !ValidName(name) || !Utf8ToWide(name, wide_name))
                     return Fail(lua_state, "bad argument #1 to 'new_tab' (tab name expected)");
-                // Optional 2nd argument: false = empty tab, lay it out with new_container.
-                const TValue* columns = Argument(lua_state, 2);
-                const bool default_columns = columns == nullptr || columns->type != itype_false;
-                switch (CreateTab(name, wide_name, default_columns))
+                // Optional 2nd argument: icon (texture id). Optional 3rd: false = empty tab, lay it out
+                // with new_container. Before the icon existed the 2nd argument was `columns`, so a
+                // boolean there is still read that way. Optional 4th: place in the tab bar.
+                TabOptions options;
+                const TValue* columns = Argument(lua_state, 3);
+                const TValue* second = Argument(lua_state, 2);
+                if (second != nullptr && (second->type == itype_false || second->type == itype_true))
+                    columns = second;
+                else if (!ReadTextureId(lua_state, 2, options.icon))
+                    return Fail(lua_state, "bad argument #2 to 'new_tab' (texture id expected)");
+                options.default_columns = columns == nullptr || columns->type != itype_false;
+                if (!ReadTabPlace(lua_state, 4, options.place))
+                    return Fail(lua_state, "bad argument #4 to 'new_tab' (position: number from 1, \"first\" or \"last\" expected)");
+                switch (CreateTab(name, wide_name, options))
                 {
                 case Status::Created: return ReturnBoolean(lua_state, true);
                 case Status::Exists: return ReturnBoolean(lua_state, false);
