@@ -69,6 +69,23 @@ ui.new_slider("MYTAB", "B", "slider", 0, 100, 50)
 
 Names are matched exactly by `ui.new_*`. Call these when the script loads. Loading, unloading or reloading any script closes the Lua state and runs the remaining scripts again, so a tab disappears with its script and is made again by the scripts that are still loaded. There is room for 7 script tabs.
 
+## Font Awesome icons
+
+```lua
+ui.new_checkbox("LUA", "A", skeetsdk.get_icon("car") .. "  Drive")
+ui.new_checkbox("LUA", "A", skeetsdk.get_icon("regular/heart") .. "  Like")
+```
+
+| Function | |
+|---|---|
+| `skeetsdk.get_icon(name)` | returns the icon as a one-character string (or `nil, message`), to put in any text the menu draws: checkboxes, sliders, buttons, labels, tab names |
+
+`name` is a [Font Awesome Free](https://fontawesome.com/search?ic=free) 7 icon name or alias (`"car"`, `"gear"`, `"home"`), case-insensitive, with an optional `fa-` in front. Put a style before it with a slash to choose it: `"solid/heart"`, `"regular/heart"`, `"brands/discord"`. Without one you get the icon's main style: solid, else brands, else regular. Asking for a style the icon does not have (`"regular/car"`) returns `nil` and says which styles exist. The 47 icons whose character is an ordinary letter, digit or `*` (`"a"`, `"0"`) are left out, so normal text can never turn into an icon.
+
+How it works: the menu draws text with its own glyph cache on top of GDI. skeet.dll embeds the three Font Awesome fonts, registers them as private fonts of the game process, and redirects only the cheat's own glyph calls (not gdi32, not the game's text) so that an icon's code point is measured and drawn with the Font Awesome font instead of the menu font, at 90% of the text height. The result is a character in the Private Use Area; regular and brands icons that share a code point with a solid one get an unused code point of their own, which `get_icon` hands out. If something stops this from loading, `get_icon` returns `nil` and the reason, and the menu is left as it was.
+
+The fonts are Font Awesome Free 7.3.1 and are embedded as released (`skeet/third_party/fontawesome`, with their `LICENSE.txt`). `tools/generate-fontawesome.ps1` regenerates `skeet/fontawesome_icons.inc` from a Font Awesome release; `tools/fontawesome_harness.cpp` tests the GDI side without the game. Font Awesome Free by @fontawesome - https://fontawesome.com - icons are CC BY 4.0, fonts SIL OFL 1.1, code MIT: https://fontawesome.com/license/free
+
 ## For contributors: hooking game code
 
-The cheat CRC-checks its own code (`0x4331E000`, size `0x105B12`) and `skeet_t::extra()` stores the result. A hook inside that range that is installed after `extra()` makes the check fail and the menu never shows, so `config_scripts` and `ui_tabs` install before it (see `dllmain.cpp`). The Lua guard patches code outside the range and can go after.
+The cheat CRC-checks its own code (`0x4331E000`, size `0x105B12`) and `skeet_t::extra()` stores the result. A hook inside that range that is installed after `extra()` makes the check fail and the menu never shows, so `config_scripts`, `ui_tabs` and `fontawesome` (it redirects glyph calls inside the range) install before it (see `dllmain.cpp`). The Lua guard patches code outside the range and can go after.

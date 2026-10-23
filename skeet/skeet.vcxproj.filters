@@ -75,6 +75,9 @@
     <ClInclude Include="ui_tabs.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="fontawesome.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -98,6 +101,9 @@
     <ClCompile Include="ui_tabs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="fontawesome.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <None Include="Binary\exports.json" />
@@ -108,6 +114,9 @@
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="skeet.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+    <ResourceCompile Include="fontawesome.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>
