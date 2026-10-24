@@ -69,6 +69,48 @@ ui.new_slider("MYTAB", "B", "slider", 0, 100, 50)
 
 Names are matched exactly by `ui.new_*`. Call these when the script loads. Loading, unloading or reloading any script closes the Lua state and runs the remaining scripts again, so a tab disappears with its script and is made again by the scripts that are still loaded. There is room for 7 script tabs.
 
+## Showing and hiding tabs and containers
+
+`ui.set_visible` takes a control's reference. Given names instead of a reference it now also shows and hides tabs and containers:
+
+```lua
+ui.set_visible("APP", false)                -- the tab: its icon leaves the tab bar, the ones below move up
+ui.set_visible("APP", "SETTINGS", false)    -- one container of a tab
+```
+
+A page switcher, with the page containers on top of each other and a combobox choosing which one shows:
+
+```lua
+skeetsdk.new_tab("APP", nil, false)                           -- an empty tab
+skeetsdk.new_container("APP", "NAV",      0, 24, 0, 5)
+skeetsdk.new_container("APP", "HOME",     0, 24, 5, 19)
+skeetsdk.new_container("APP", "SETTINGS", 0, 24, 5, 19)       -- the same place as HOME
+
+local page = ui.new_combobox("APP", "NAV", "Page", "Home", "Settings")
+ui.new_checkbox("APP", "HOME", "Something on the home page")
+ui.new_slider("APP", "SETTINGS", "Something in settings", 0, 100, 50)
+
+local function show_page()
+    local current = ui.get(page)
+    ui.set_visible("APP", "HOME", current == "Home")
+    ui.set_visible("APP", "SETTINGS", current == "Settings")
+end
+ui.set_callback(page, show_page)
+show_page()
+```
+
+| Function | |
+|---|---|
+| `skeetsdk.set_tab_visible(tab, visible)` | what `ui.set_visible("TAB", visible)` does. Returns `true`, or `nil, message` |
+| `skeetsdk.set_container_visible(tab, container, visible)` | what `ui.set_visible("TAB", "CONTAINER", visible)` does. Returns `true`, or `nil, message` |
+
+Through `ui.set_visible` an unknown name raises a Lua error, like the other `ui.*` functions; the `skeetsdk` functions return `nil, message` instead. A number as the first argument goes to the game's own `ui.set_visible`, unchanged, so controls work as before and a control hidden that way stays independent of its container.
+
+- Built-in tabs and containers can be hidden too, except the LUA tab (it is where scripts are managed). Hiding the open tab switches to the LUA tab first.
+- A hidden container is neither drawn nor clickable; the controls in it keep their values. Containers keep their place, so hiding one leaves its space empty.
+- A hidden tab holds no slot in the tab bar. Showing it puts it back where it was among the visible tabs.
+- Whatever a script hid comes back when the Lua state closes (loading, unloading or reloading any script), before the scripts that remain run again, like the tabs a script made.
+
 ## Font Awesome icons
 
 ```lua

@@ -25,6 +25,20 @@ namespace skeetsdk::ui_tabs
     //       width/height the size, in blocks (defaults: 0, 24, 0, 24 = the whole tab).
     //       Returns true / false (already existed) / nil, message like new_tab.
     //
+    //   skeetsdk.set_tab_visible(tab, visible)
+    //   skeetsdk.set_container_visible(tab, container, visible)
+    //       Hide or show a tab (its icon leaves the tab bar and the icons below it close the gap) or one
+    //       container of a tab, by name. Works on built-in tabs and containers too; the LUA tab cannot be
+    //       hidden. Hiding the open tab goes to the LUA tab first. Return true, or nil and a message.
+    //       Everything a script hid comes back when the Lua state is closed (load, unload or reload of any
+    //       script), before the script runs again, like the tabs it made.
+    //
+    //   ui.set_visible("TAB", visible)  and  ui.set_visible("TAB", "CONTAINER", visible)
+    //       The same two, through the game's ui.set_visible, which only takes control references (numbers).
+    //       Anything else is passed to the game's function unchanged. Unknown names raise a Lua error,
+    //       like the other ui.* functions. Installed in Lua (ui_wrapper_source) the first time a script loads
+    //       after `ui` exists.
+    //
     // Names are matched exactly by ui.new_*, so use the same spelling there. Call these when the
     // script loads, not from a paint callback. A tab lives as long as the script that made it:
     // loading, unloading or reloading any script closes the Lua state and runs the remaining scripts
