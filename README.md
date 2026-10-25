@@ -151,6 +151,12 @@ A `true` after the items makes the listbox as tall as its search box and its ite
 
 How it works (listboxes): the game's `ui.new_listbox` reads items from the 4th argument on and skips anything that is not a string, so the trailing `true` is passed to it unchanged. A Lua wrapper then sets the listbox's height to its rows and gives that listbox a copy of the listbox vtable whose scale handler runs the game's and fits the height again, because the game recomputes the height from the default one and rounding at a scale like 125% can lose a row. `ui.update` is wrapped to fit it again after the game sets the new items. Nothing in the cheat's code is patched. `tools/ui_listbox_harness.cpp` tests it on a fake listbox without the game; `tools/ui_listbox_test.lua` is the in-game test script.
 
+## More than 1024 controls in a container
+
+The game gives a container room for 1024 controls when it hands them to its click handler and its drawing: controls after the 1024th never react to the mouse (or are never drawn). Hidden controls count for clicks, so a script that makes many controls and switches them with `ui.set_visible` could end up with visible controls that do not respond. There is no limit now; nothing changes for scripts below it.
+
+How it works: the two routines that fill those lists (0x433C8238 for input, every control; 0x433FC71A for drawing, the visible ones) are replaced by ones that use the caller's 1024-slot list as before and a buffer of their own past that, sorted with the game's own sort and comparators. `tools/ui_children_harness.cpp` tests them on a fake container without the game; `tools/ui_children_test.lua` is the in-game test script.
+
 ## Font Awesome icons
 
 ```lua

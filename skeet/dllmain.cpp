@@ -3,6 +3,7 @@
 #include "lua_loadstring_guard.hpp"
 #include "config_scripts.hpp"
 #include "ui_tabs.hpp"
+#include "ui_children.hpp"
 #include "fontawesome.hpp"
 
 static void thread(HMODULE base) {
@@ -21,6 +22,8 @@ static void thread(HMODULE base) {
         std::cout << skCrypt("[INFO] failed to install config scripts\n");
     if (!skeetsdk::ui_tabs::Install())
         std::cout << skCrypt("[INFO] failed to install ui tabs\n");
+    if (!skeetsdk::ui_children::Install())
+        std::cout << skCrypt("[INFO] failed to install ui children\n");
     // Redirects the cheat's glyph calls (their import sites were just written by fix_imports), so it also
     // has to run before extra().
     if (!skeetsdk::fontawesome::Install())
