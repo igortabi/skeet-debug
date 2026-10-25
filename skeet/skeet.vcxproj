@@ -170,6 +170,11 @@
     <ClInclude Include="lua_loadstring_guard.hpp" />
     <ClInclude Include="config_scripts.hpp" />
     <ClInclude Include="ui_tabs.hpp" />
+    <ClInclude Include="ui_texture.hpp" />
+    <ClInclude Include="ui_listbox.hpp" />
+    <ClInclude Include="ui_children.hpp" />
+    <ClInclude Include="renderer_blur.hpp" />
+    <ClInclude Include="fontawesome.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="pch.h" />
@@ -188,6 +193,21 @@
     <ClCompile Include="ui_tabs.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="ui_texture.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ui_listbox.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ui_children.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="renderer_blur.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="fontawesome.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -200,10 +220,12 @@
   <ItemGroup>
     <None Include="Binary\exports.json" />
     <None Include="Binary\skeet.bin" />
+    <None Include="fontawesome_icons.inc" />
     <None Include="VM\bytecode.json" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="skeet.rc" />
+    <ResourceCompile Include="fontawesome.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

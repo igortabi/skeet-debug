@@ -1,0 +1,6 @@
+// Font Awesome Free fonts, embedded into skeet.dll exactly as released (see third_party/fontawesome/README.md).
+// Loaded by fontawesome.cpp with FindResourceW(L"FA_SOLID" ...) and registered as private process fonts.
+
+FA_SOLID   RCDATA "third_party\\fontawesome\\fa-solid-900.otf"
+FA_REGULAR RCDATA "third_party\\fontawesome\\fa-regular-400.otf"
+FA_BRANDS  RCDATA "third_party\\fontawesome\\fa-brands-400.otf"

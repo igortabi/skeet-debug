@@ -5,3 +5,7 @@
 *.bin binary
 skeet/Binary/*.json -text
 skeet/VM/*.json -text
+
+# Font Awesome fonts are embedded into skeet.dll as-is: never convert them.
+*.otf binary
+*.ttf binary
