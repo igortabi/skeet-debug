@@ -7,7 +7,6 @@
 #define NOMINMAX
 #endif
 #include <Windows.h>
-#include <DbgHelp.h>
 #include <intrin.h>
 
 #include <cstddef>
@@ -24,7 +23,6 @@ namespace skeetsdk::crash_report
         constexpr std::uintptr_t cheat_image_base = 0x43310000u;
         constexpr std::size_t stack_scan_dwords = 0x800;
         constexpr int max_stack_entries = 24;
-        constexpr int max_dumps = 3;
 
         thread_local bool describing = false;
 
@@ -139,43 +137,5 @@ namespace skeetsdk::crash_report
         }
         describing = false;
         return text;
-    }
-
-    std::wstring WriteDump(_EXCEPTION_POINTERS* exception) noexcept
-    {
-        static LONG written = 0;
-        if (exception == nullptr || InterlockedIncrement(&written) > max_dumps) return {};
-        using WriteFn = BOOL(WINAPI*)(HANDLE, DWORD, HANDLE, MINIDUMP_TYPE, PMINIDUMP_EXCEPTION_INFORMATION,
-            PMINIDUMP_USER_STREAM_INFORMATION, PMINIDUMP_CALLBACK_INFORMATION);
-        HMODULE dbghelp = LoadLibraryW(L"dbghelp.dll");
-        const auto write = dbghelp != nullptr ? reinterpret_cast<WriteFn>(GetProcAddress(dbghelp, "MiniDumpWriteDump")) : nullptr;
-        if (write == nullptr) return {};
-
-        wchar_t directory[MAX_PATH]{};
-        const DWORD length = GetModuleFileNameW(nullptr, directory, MAX_PATH);
-        for (DWORD i = length; i > 0; --i)
-            if (directory[i - 1] == L'\\')
-            {
-                directory[i - 1] = 0;
-                break;
-            }
-        std::wstring path;
-        try
-        {
-            path = std::format(L"{}\\skeet_crash_{}_{}.dmp", directory, GetCurrentProcessId(), written);
-        }
-        catch (...)
-        {
-            return {};
-        }
-        const HANDLE file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-        if (file == INVALID_HANDLE_VALUE) return {};
-        MINIDUMP_EXCEPTION_INFORMATION information{ GetCurrentThreadId(), exception, FALSE };
-        const auto type = static_cast<MINIDUMP_TYPE>(MiniDumpWithDataSegs | MiniDumpWithPrivateReadWriteMemory
-            | MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithFullMemoryInfo | MiniDumpWithThreadInfo
-            | MiniDumpWithUnloadedModules | MiniDumpWithHandleData);
-        const BOOL ok = write(GetCurrentProcess(), GetCurrentProcessId(), file, type, &information, nullptr, nullptr);
-        CloseHandle(file);
-        return ok ? path : std::wstring{};
     }
 }

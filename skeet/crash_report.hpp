@@ -12,8 +12,4 @@ namespace skeetsdk::crash_report
     // Reads memory only after VirtualQuery says it is readable, and returns an empty string when it is entered
     // again from inside itself.
     std::wstring Describe(const _EXCEPTION_POINTERS* exception) noexcept;
-
-    // Writes skeet_crash_<pid>_<n>.dmp (heap and stacks included) next to csgo.exe for the first few calls, and
-    // returns its path, or an empty string.
-    std::wstring WriteDump(_EXCEPTION_POINTERS* exception) noexcept;
 }
