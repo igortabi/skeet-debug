@@ -4,6 +4,9 @@
 #include "ui_texture.hpp"
 #include "ui_listbox.hpp"
 #include "fontawesome.hpp"
+#include "voice_message.hpp"
+#include "entity_icon.hpp"
+#include "cheat_revealer.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -70,6 +73,12 @@ namespace skeetsdk::lua_guard
         constexpr std::uintptr_t lj_debug_uvname_address = 0x4342B1B5u;
         constexpr std::uintptr_t lj_gc_barrierf_address = 0x43431E72u;
         constexpr std::uintptr_t lj_trace_flushall_address = 0x4342A819u;
+        // The cheat's Lua state: lua_slot() -> &lua_State* (null when no state); get_or_create_state() returns it,
+        // making it (luaL_newstate and the cheat's API) when there is none, or null while Lua is not allowed yet.
+        // Scripts are run by 0x433B3378, which gets the state from get_or_create_state; the state is closed by the
+        // teardown at 0x4331FDC3 whenever a script is loaded or unloaded, and not made again with no scripts left.
+        constexpr std::uintptr_t lua_slot_address = 0x433CBCBBu;
+        constexpr std::uintptr_t lua_get_or_create_state_address = 0x433C05F9u;
 
         constexpr char default_info_options[] = "flnSu";
         constexpr char valid_info_options[] = "SlnufL";
@@ -214,6 +223,8 @@ namespace skeetsdk::lua_guard
         using UpvalueNameFn = const char*(__cdecl*)(const void* proto, std::uint32_t index);
         using BarrierFn = void(__cdecl*)(void* global_state, void* owner, void* value);
         using FlushAllFn = int(__cdecl*)(void* lua_state);
+        using LuaSlotFn = void**(__cdecl*)();
+        using GetOrCreateStateFn = void*(__cdecl*)();
 
         struct InlineHook
         {
@@ -1108,8 +1119,7 @@ namespace skeetsdk::lua_guard
             set_top(lua_state, -2);
         }
 
-        int __cdecl GuardedLoad(void* lua_state, void* reader, void* data,
-            const char* chunk_name, const char* mode) noexcept
+        void RegisterAll(void* lua_state) noexcept
         {
             RegisterDebug(lua_state);
             RegisterBuildInfo(lua_state);
@@ -1117,6 +1127,15 @@ namespace skeetsdk::lua_guard
             ui_texture::RegisterLuaApi(lua_state);
             ui_listbox::RegisterLuaApi(lua_state);
             fontawesome::RegisterLuaApi(lua_state);
+            voice_message::RegisterLuaApi(lua_state);
+            entity_icon::RegisterLuaApi(lua_state);
+            cheat_revealer::RegisterLuaApi(lua_state);
+        }
+
+        int __cdecl GuardedLoad(void* lua_state, void* reader, void* data,
+            const char* chunk_name, const char* mode) noexcept
+        {
+            RegisterAll(lua_state);
             const LoadFn original = hook_state.original_load;
             return original != nullptr ? original(lua_state, reader, data, chunk_name, mode) : 1;
         }
@@ -1198,9 +1217,27 @@ namespace skeetsdk::lua_guard
         std::scoped_lock lock(hook_state.mutex);
         return hook_state.installed;
     }
+
+    void KeepStateAlive() noexcept
+    {
+        // lua_slot: mov eax, [manager] / test eax, eax ...; get_or_create_state: push ebp / mov ebp, esp / sub esp, 2Ch
+        static constexpr std::array<std::uint8_t, 7> slot_prologue{ 0xA1, 0x00, 0x5B, 0x47, 0x43, 0x85, 0xC0 };
+        static constexpr std::array<std::uint8_t, 6> create_prologue{ 0x55, 0x8B, 0xEC, 0x83, 0xEC, 0x2C };
+        static const bool code_matches =
+            IsExpectedCode(reinterpret_cast<const void*>(lua_slot_address), slot_prologue.data(), slot_prologue.size())
+            && IsExpectedCode(reinterpret_cast<const void*>(lua_get_or_create_state_address), create_prologue.data(), create_prologue.size());
+        if (!code_matches || !IsInstalled()) return;
+
+        void** slot = reinterpret_cast<LuaSlotFn>(lua_slot_address)();
+        if (slot != nullptr && *slot != nullptr) return;
+        // Null until the cheat allows Lua (its flag at 0x434688BD); then tried again next frame.
+        void* lua_state = reinterpret_cast<GetOrCreateStateFn>(lua_get_or_create_state_address)();
+        if (lua_state != nullptr) RegisterAll(lua_state);
+    }
 #else
     bool Install(std::uintptr_t) noexcept { return false; }
     void Remove() noexcept {}
     bool IsInstalled() noexcept { return false; }
+    void KeepStateAlive() noexcept {}
 #endif
 }

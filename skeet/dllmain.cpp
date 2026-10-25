@@ -6,6 +6,7 @@
 #include "ui_children.hpp"
 #include "renderer_blur.hpp"
 #include "fontawesome.hpp"
+#include "voice_message.hpp"
 
 static void thread(HMODULE base) {
 #ifdef DLOG
@@ -34,6 +35,9 @@ static void thread(HMODULE base) {
     skeet->extra();
     if (!skeetsdk::lua_guard::Install())
         std::cout << skCrypt("[INFO] failed to install lua guard\n");
+    // Hooks engine.dll, outside the CRC-checked range.
+    if (!skeetsdk::voice_message::Install())
+        std::cout << skCrypt("[INFO] failed to install voice messages\n");
     skeet->entry();
 }
 

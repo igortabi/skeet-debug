@@ -175,6 +175,10 @@
     <ClInclude Include="ui_children.hpp" />
     <ClInclude Include="renderer_blur.hpp" />
     <ClInclude Include="fontawesome.hpp" />
+    <ClInclude Include="voice_message.hpp" />
+    <ClInclude Include="crash_report.hpp" />
+    <ClInclude Include="entity_icon.hpp" />
+    <ClInclude Include="cheat_revealer.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="pch.h" />
@@ -208,6 +212,18 @@
     <ClCompile Include="fontawesome.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="voice_message.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="crash_report.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="entity_icon.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="cheat_revealer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
@@ -226,6 +242,7 @@
   <ItemGroup>
     <ResourceCompile Include="skeet.rc" />
     <ResourceCompile Include="fontawesome.rc" />
+    <ResourceCompile Include="revealer_icons.rc" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

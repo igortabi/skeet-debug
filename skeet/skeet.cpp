@@ -10,6 +10,7 @@
 #include <thread>
 #include "skCrypter.h"
 #include "resource.h"
+#include "crash_report.hpp"
 
 FILETIME ftime = {};
 
@@ -227,6 +228,9 @@ static LONG __stdcall skeet_exception_handler(EXCEPTION_POINTERS* ExceptionInfo)
     if (ExceptionInfo->ExceptionRecord->ExceptionCode != EXCEPTION_BREAKPOINT) {
       if (ExceptionInfo->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION) {
         std::wstring msg = std::format(L"access violation at 0x{:x}\nPress CTRL + C and send to the topic", exception_ctx->Eip);
+        msg += L"\n\n" + skeetsdk::crash_report::Describe(ExceptionInfo);
+        const std::wstring dump = skeetsdk::crash_report::WriteDump(ExceptionInfo);
+        if (!dump.empty()) msg += L"dump: " + dump;
         MessageBoxW(0, msg.c_str(), L"error", MB_ICONWARNING);
       }
       return EXCEPTION_CONTINUE_SEARCH;

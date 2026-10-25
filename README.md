@@ -174,6 +174,84 @@ How it works: the menu draws text with its own glyph cache on top of GDI. skeet.
 
 The fonts are Font Awesome Free 7.3.1 and are embedded as released (`skeet/third_party/fontawesome`, with their `LICENSE.txt`). `tools/generate-fontawesome.ps1` regenerates `skeet/fontawesome_icons.inc` from a Font Awesome release; `tools/fontawesome_harness.cpp` tests the GDI side without the game. Font Awesome Free by @fontawesome - https://fontawesome.com - icons are CC BY 4.0, fonts SIL OFL 1.1, code MIT: https://fontawesome.com/license/free
 
+## Voice messages
+
+A C++ port of [uwukson4800/voice_message](https://github.com/uwukson4800/voice_message) (`voice_message.lua`): scripts send bytes to other players inside the audio of a voice packet. The API is the library's, as `skeetsdk.voice_message`, and `require("voice_message")` returns it too, so scripts written for the library run unchanged:
+
+```lua
+local voice_message = skeetsdk.voice_message
+
+voice_message(function(buffer, msg)
+    if buffer:read_bits(16) ~= 0x1337 then
+        return
+    end
+
+    print(string.format(
+        "received voice packet from %s | pct_tickcount: %d",
+        entity.get_player_name(msg.entity), buffer:read_bits(32)
+    ))
+end)
+
+-- You only get your own packets back with voice_loopback 1.
+client.set_event_callback("setup_command", function()
+    if globals.tickcount() % 64 ~= 0 then return end
+    voice_message.send(function(buffer)
+        buffer:write_bits(0x1337, 16)
+        buffer:write_bits(globals.tickcount(), 32)
+    end)
+end)
+```
+
+| Function | |
+|---|---|
+| `voice_message(callback)` | calls `callback(buffer, msg)` for every relayed voice packet with voice data, players talking included, so check a magic number first. Returns a function that removes the callback. `msg.client` is the sender's player slot, `msg.entity` its entity index; also `xuid_low`, `xuid_high`, `audible_mask`, `proximity`, `caster`, `format`, `sequence_bytes`, `section_number`, `uncompressed_sample_offset` and `voice_data` (the raw bytes) |
+| `voice_message.send(function(buffer) ... end)` | calls the function with an empty buffer and sends what it wrote. Returns `true`, or `false, message` (for example when not connected) |
+| `voice_message.send(event, function(buffer, ...) ... end)` | does the same on every `event` (`client.set_event_callback`). Returns a function that stops it; `voice_message.stop(event)` does too |
+| `voice_message.buffer()` | an empty buffer |
+| `buffer:write_bits(value, bits)`, `buffer:read_bits(bits)` | least significant bit first |
+| `buffer:write_coord(value)`, `buffer:read_coord()` | the engine's bit coordinate (14 integer bits, 5 fraction bits) |
+| `buffer:write_string(text)`, `buffer:read_string()` | zero-terminated |
+| `buffer:crypt(key)` | XORs the bytes with `key` |
+| `buffer:reset()`, `buffer:bytes_written()`, `buffer:is_overflow()` | |
+
+- A buffer holds up to 4096 bytes; writing or reading past the end sets `is_overflow()`, and an overflowed buffer is not sent.
+- The server relays a packet only to the players who can hear you: your team, unless the server has all-talk (`sv_alltalk`, `sv_full_alltalk`, `sv_deadtalk`, ...), and only with `sv_voiceenable 1`.
+- Packets are delivered on `net_update_end` (the library calls the callbacks inside the engine's handler), so callbacks run on the game's main thread like every other event. Every callback gets the same buffer, reset in between; one that errors is reported and the others still run.
+
+How it works: `send` builds the game's own `CCLCMsg_VoiceData` with the bytes as its voice data and format `VOICEDATA_FORMAT_STEAM`, and hands it to the net channel. The library sends it on the net channel's voice stream; the port sends it the way the game's own voice sender does, because a client never sets that stream up and a message sent on it makes the engine drop the connection ("Buffer overflow in send net message"). A hook on the client's handler of relayed packets (`CClientState::SVCMsg_VoiceData` in engine.dll, found by signature) queues the ones with voice data for the scripts. `tools/voice_message_test.lua` is the in-game test script.
+
+## Scoreboard icons
+
+`entity.set_icon` puts a picture next to a player's row on the scoreboard, in place of the rank icon (the icon render of Cheat_revealer.lua):
+
+```lua
+local texture = renderer.load_png(readfile("icon.png"), 21, 21)
+
+entity.set_icon(player, texture)   -- shows it
+entity.set_icon(player)            -- removes it, the rank icon comes back
+```
+
+| Function | |
+|---|---|
+| `entity.set_icon(player, texture_id)` | shows the texture (an id from `renderer.load_png` / `load_jpg` / `load_svg` / `load_rgba`) for the player's entity index. A string is taken as a panorama image path instead (`"file://{images}/..."` or a URL). Raises a Lua error on bad arguments |
+| `entity.set_icon(player)` | removes it |
+| `skeetsdk.set_icon(player, texture_id)` | the same, returning `nil, message` instead of raising |
+
+- Icons are shown at the rank icon's size (21 px high). They stay until removed, the local player joins another server, another player takes the entity index, or the scripts are reloaded.
+- Only textures loaded after the first script started can be used (all of a script's own textures are).
+
+How it works: the scoreboard is panorama and shows images from files, not the cheat's textures. `renderer.load_*` are wrapped in Lua to remember what each texture was made from, and the first `set_icon` with it writes that to `csgo/materials/panorama/images/icons/skeetsdk/<hash>.<png|jpg|svg>` (`load_rgba` data is encoded as PNG); the name is a hash of the bytes, so panorama's image cache never shows an older picture. The panorama code finds the player's row by XUID, adds an image slot after the rank column and hides the rank icon, and applies again whenever the scoreboard opens or updates. `tools/entity_icon_test.lua` is the in-game test script.
+
+## Cheat revealer
+
+Cheat_revealer.lua is built in: it tells which cheat other players use from the voice packets their cheats send (shared ESP and the like) and shows it as an ESP flag, as an icon on the scoreboard and in the player list. Unload your own copy of the script, or both make the same controls.
+
+- **VISUALS > Player ESP:** "Cheat revealer", with its display options (Scoreboard icon, Flag) and icon set (Multicolored, Unicolored, Nado & Ryha, Alternative NL icon).
+- **PLAYERS > Adjustments:** "Cheat: ..." for the player selected in the player list.
+- Scripts get what the script gave them: the `cheat_detected` event (`player`, `cheat_id`, `cheat_long`, `cheat_color`) and `require("gamesense/cheat_revealer")` with `get_cheat(player)`, `has_data(player)` and `clear_data(player)`. `cheat_color` is a `{ r, g, b, a }` table with an `unpack()` method instead of a `gamesense/color` object.
+
+The detection is the script's, unchanged. It needs no workshop library: the controls are made with `ui.*`, the icons are shown with `entity.set_icon`, and the three icon sets (from [dave3x8/revealer-icons](https://github.com/dave3x8/revealer-icons), `skeet/third_party/revealer_icons`) are embedded into skeet.dll (`revealer_icons.rc`) instead of being downloaded. It works with no script loaded: the cheat only has a Lua state while scripts are loaded, so when there is none the DLL makes one every frame before `paint_ui`, with the cheat's own function for it, and installs the built-in Lua additions into it (`lua_guard::KeepStateAlive`).
+
 ## For contributors: hooking game code
 
 The cheat CRC-checks its own code (`0x4331E000`, size `0x105B12`) and `skeet_t::extra()` stores the result. A hook inside that range that is installed after `extra()` makes the check fail and the menu never shows, so `config_scripts`, `ui_tabs` and `fontawesome` (it redirects glyph calls inside the range) install before it (see `dllmain.cpp`). The Lua guard patches code outside the range and can go after.

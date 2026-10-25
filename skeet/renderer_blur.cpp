@@ -1,4 +1,5 @@
 #include "renderer_blur.hpp"
+#include "lua_loadstring_guard.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -157,6 +158,8 @@ float4 main(float2 uv : TEXCOORD0) : COLOR
         // Takes this frame's rects (in-game paint ran just before) off the list, so the game never draws them.
         void __fastcall PaintUi(void* renderer, void* frame) noexcept
         {
+            // Not blur: the one per-frame hook on the game's thread, so the built-in Lua features get a state here.
+            lua_guard::KeepStateAlive();
             paint_ui(renderer, frame);
             auto* const context = *reinterpret_cast<void**>(blur_context_address);
             if (context == nullptr) return;
