@@ -111,6 +111,28 @@ Through `ui.set_visible` an unknown name raises a Lua error, like the other `ui.
 - A hidden tab holds no slot in the tab bar. Showing it puts it back where it was among the visible tabs.
 - Whatever a script hid comes back when the Lua state closes (loading, unloading or reloading any script), before the scripts that remain run again, like the tabs a script made.
 
+## Images in the menu
+
+```lua
+local svg = [[<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64"><circle cx="32" cy="32" r="30" fill="#9fca2b"/></svg>]]
+local logo = ui.new_texture("LUA", "A", renderer.load_svg(svg, 64, 64), 64, 64)
+ui.new_checkbox("LUA", "A", "below the image")
+
+-- ui.set(logo, renderer.load_png(readfile("banner.png"), 200, 80), 200, 80)  -- another image, another size
+-- ui.set_visible(logo, false)
+```
+
+| Function | |
+|---|---|
+| `ui.new_texture(tab, container, texture_id, width, height)` | adds a control that draws the texture stretched to `width` x `height`, below the previous control and lined up with the other controls' text. `texture_id` comes from `renderer.load_png`, `load_jpg`, `load_svg` or `load_rgba`. `width` and `height` are pixels at 100% menu scale (whole numbers, 1 to 4096); like every control it grows with the menu's DPI scale. Returns a reference, or raises an error like `ui.new_label` |
+| `ui.set(texture, texture_id [, width, height])` | draws another texture from now on, and resizes the control when `width` and `height` are given |
+| `skeetsdk.new_texture(...)`, `skeetsdk.set_texture(...)` | the same two, returning `nil, message` instead of raising |
+
+- The reference is an ordinary one: `ui.set_visible` hides the image, the container scrolls it and cuts off what is wider than the container, and the image goes away with its script.
+- At a menu scale other than 100% the texture is stretched to the scaled size. Load an SVG at the size it is drawn at if it has to be sharp.
+
+How it works: `ui.new_texture` makes a label with the game's own `ui.new_label` (named `"\n"`, which the game stores as an empty name) and gives that one label a copy of the label vtable whose `Render` draws the texture and whose destructor forgets it. The label's default size becomes the image's, so the menu lays it out and scales it like any other control. Nothing in the cheat's code is patched. `tools/ui_texture_harness.cpp` tests the control on a fake label and renderer without the game.
+
 ## Font Awesome icons
 
 ```lua
