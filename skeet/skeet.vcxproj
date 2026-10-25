@@ -173,6 +173,7 @@
     <ClInclude Include="ui_texture.hpp" />
     <ClInclude Include="ui_listbox.hpp" />
     <ClInclude Include="ui_children.hpp" />
+    <ClInclude Include="renderer_blur.hpp" />
     <ClInclude Include="fontawesome.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
@@ -199,6 +200,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="ui_children.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="renderer_blur.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="fontawesome.cpp">

@@ -4,6 +4,7 @@
 #include "config_scripts.hpp"
 #include "ui_tabs.hpp"
 #include "ui_children.hpp"
+#include "renderer_blur.hpp"
 #include "fontawesome.hpp"
 
 static void thread(HMODULE base) {
@@ -24,6 +25,8 @@ static void thread(HMODULE base) {
         std::cout << skCrypt("[INFO] failed to install ui tabs\n");
     if (!skeetsdk::ui_children::Install())
         std::cout << skCrypt("[INFO] failed to install ui children\n");
+    if (!skeetsdk::renderer_blur::Install())
+        std::cout << skCrypt("[INFO] failed to install renderer blur\n");
     // Redirects the cheat's glyph calls (their import sites were just written by fix_imports), so it also
     // has to run before extra().
     if (!skeetsdk::fontawesome::Install())
