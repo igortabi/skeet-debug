@@ -6,11 +6,14 @@
     binaries, so anyone can rebuild a release and compare its SHA-256 with the published one.
       /Brepro       no timestamps; PE timestamp and PDB id become content hashes
       /pathmap      no absolute source paths in the objects
+      /experimental:deterministic
+                    needed for /pathmap since MSVC 14.51 (D9007: ignored without it); without it the
+                    output changes with the length of the build folder's path
       /PDBALTPATH   only the PDB file name in the binary, not the builder's directory
   -->
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
-      <AdditionalOptions>%(AdditionalOptions) /Brepro "/pathmap:$(MSBuildThisFileDirectory.TrimEnd('\'))=."</AdditionalOptions>
+      <AdditionalOptions>%(AdditionalOptions) /Brepro /experimental:deterministic "/pathmap:$(MSBuildThisFileDirectory.TrimEnd('\'))=."</AdditionalOptions>
     </ClCompile>
     <Link>
       <AdditionalOptions>%(AdditionalOptions) /Brepro /PDBALTPATH:%25_PDB%25</AdditionalOptions>

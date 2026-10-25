@@ -19,7 +19,7 @@ certutil -hashfile Release\skeet.dll SHA256
 
 The hash should match the one published with the release. If your toolset or Windows SDK version differs from the one used for the release (a newer SDK is picked by default), the hash can differ too.
 
-What makes this work (see `Directory.Build.targets`): `/Brepro` replaces timestamps with content hashes, `/pathmap` and `/PDBALTPATH` keep your folder paths out of the binary, and `skCrypt` derives its keys from `__LINE__` instead of `__TIME__`.
+What makes this work (see `Directory.Build.targets`): `/Brepro` replaces timestamps with content hashes, `/pathmap` (with `/experimental:deterministic`, which MSVC 14.51 needs for it to apply) and `/PDBALTPATH` keep your folder paths out of the binary, and `skCrypt` derives its keys from `__LINE__` instead of `__TIME__`.
 
 ## skeetsdk.build
 
