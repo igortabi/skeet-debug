@@ -131,7 +131,25 @@ ui.new_checkbox("LUA", "A", "below the image")
 - The reference is an ordinary one: `ui.set_visible` hides the image, the container scrolls it and cuts off what is wider than the container, and the image goes away with its script.
 - At a menu scale other than 100% the texture is stretched to the scaled size. Load an SVG at the size it is drawn at if it has to be sharp.
 
-How it works: `ui.new_texture` makes a label with the game's own `ui.new_label` (named `"\n"`, which the game stores as an empty name) and gives that one label a copy of the label vtable whose `Render` draws the texture and whose destructor forgets it. The label's default size becomes the image's, so the menu lays it out and scales it like any other control. Nothing in the cheat's code is patched. `tools/ui_texture_harness.cpp` tests the control on a fake label and renderer without the game.
+How it works (images): `ui.new_texture` makes a label with the game's own `ui.new_label` (named `"\n"`, which the game stores as an empty name) and gives that one label a copy of the label vtable whose `Render` draws the texture and whose destructor forgets it. The label's default size becomes the image's, so the menu lays it out and scales it like any other control. Nothing in the cheat's code is patched. `tools/ui_texture_harness.cpp` tests the control on a fake label and renderer without the game.
+
+## Listboxes that fit their items
+
+```lua
+local players = ui.new_listbox("LUA", "A", "Players", { "alpha", "bravo", "charlie" }, true)
+ui.new_listbox("LUA", "A", "Mode", "Legit", "Rage", "HvH", true)   -- the strings form takes it last
+
+ui.update(players, { "alpha", "bravo", "charlie", "delta" })       -- one row taller
+```
+
+A `true` after the items makes the listbox as tall as its search box and its items, instead of the game's fixed 300 px: no scrollbar and no empty rows. An empty list keeps one row, and a long one makes the container scroll instead.
+
+- `ui.update` fits it again, and the controls below move with it.
+- It shows every item at any menu scale.
+- Typing in the search box filters as before; the height stays.
+- Without the `true` (or with `false`) the listbox is the game's, unchanged.
+
+How it works (listboxes): the game's `ui.new_listbox` reads items from the 4th argument on and skips anything that is not a string, so the trailing `true` is passed to it unchanged. A Lua wrapper then sets the listbox's height to its rows and gives that listbox a copy of the listbox vtable whose scale handler runs the game's and fits the height again, because the game recomputes the height from the default one and rounding at a scale like 125% can lose a row. `ui.update` is wrapped to fit it again after the game sets the new items. Nothing in the cheat's code is patched. `tools/ui_listbox_harness.cpp` tests it on a fake listbox without the game; `tools/ui_listbox_test.lua` is the in-game test script.
 
 ## Font Awesome icons
 

@@ -171,6 +171,7 @@
     <ClInclude Include="config_scripts.hpp" />
     <ClInclude Include="ui_tabs.hpp" />
     <ClInclude Include="ui_texture.hpp" />
+    <ClInclude Include="ui_listbox.hpp" />
     <ClInclude Include="fontawesome.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
@@ -191,6 +192,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="ui_texture.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="ui_listbox.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="fontawesome.cpp">
