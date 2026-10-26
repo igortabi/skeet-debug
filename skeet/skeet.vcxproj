@@ -182,6 +182,7 @@
     <ClInclude Include="persist.hpp" />
     <ClInclude Include="jit_lib.hpp" />
     <ClInclude Include="config_files.hpp" />
+    <ClInclude Include="esp_dpi.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="pch.h" />
@@ -234,6 +235,9 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="config_files.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="esp_dpi.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="pch.cpp">

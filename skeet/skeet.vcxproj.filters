@@ -111,6 +111,9 @@
     <ClInclude Include="config_files.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="esp_dpi.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="dllmain.cpp">
@@ -168,6 +171,9 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="config_files.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="esp_dpi.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

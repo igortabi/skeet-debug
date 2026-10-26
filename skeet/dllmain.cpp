@@ -7,6 +7,7 @@
 #include "renderer_blur.hpp"
 #include "fontawesome.hpp"
 #include "voice_message.hpp"
+#include "esp_dpi.hpp"
 
 static void thread(HMODULE base) {
 #ifdef DLOG
@@ -28,6 +29,8 @@ static void thread(HMODULE base) {
         std::cout << skCrypt("[INFO] failed to install ui children\n");
     if (!skeetsdk::renderer_blur::Install())
         std::cout << skCrypt("[INFO] failed to install renderer blur\n");
+    if (!skeetsdk::esp_dpi::Install())
+        std::cout << skCrypt("[INFO] failed to install ESP DPI scale\n");
     // Redirects the cheat's glyph calls (their import sites were just written by fix_imports), so it also
     // has to run before extra().
     if (!skeetsdk::fontawesome::Install())

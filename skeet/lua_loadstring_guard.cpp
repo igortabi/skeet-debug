@@ -9,6 +9,7 @@
 #include "cheat_revealer.hpp"
 #include "persist.hpp"
 #include "jit_lib.hpp"
+#include "esp_dpi.hpp"
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -1131,6 +1132,7 @@ namespace skeetsdk::lua_guard
             fontawesome::RegisterLuaApi(lua_state);
             persist::RegisterLuaApi(lua_state);
             jit_lib::RegisterLuaApi(lua_state);
+            esp_dpi::RegisterLuaApi(lua_state);
             voice_message::RegisterLuaApi(lua_state);
             entity_icon::RegisterLuaApi(lua_state);
             cheat_revealer::RegisterLuaApi(lua_state);
