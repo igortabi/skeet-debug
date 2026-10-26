@@ -20,9 +20,15 @@ namespace skeetsdk::voice_message
     //   buffer: write_bits(value, n), write_coord(f), write_string(s), read_bits(n), read_coord(), read_string(),
     //           crypt(key), reset(), bytes_written(), is_overflow(). At most 4096 bytes.
     //
+    //   client.set_event_callback("voice_packet", function(e) ... end)   (and unset_event_callback)
+    //       Every relayed voice packet, with or without audio, with every field: e.entity, e.client (player slot),
+    //       e.xuid (the 64-bit value as a decimal string), e.xuid_low / xuid_high, audible_mask, proximity, caster,
+    //       format, sequence_bytes, section_number, uncompressed_sample_offset, has_bits and voice_data (raw bytes).
+    //       Other event names go to the game's functions unchanged.
+    //
     // Install() hooks the client's handler of relayed voice packets (CClientState::SVCMsg_VoiceData in
-    // engine.dll), which queues the ones with voice data; the Lua side drains the queue from net_update_end
-    // (the library calls the callbacks inside the hook). engine.dll is outside the range the cheat CRC-checks,
+    // engine.dll), which queues every packet for a second; voice_message and voice_packet each read the queue with
+    // their own cursor from net_update_end (the library calls the callbacks inside the hook). engine.dll is outside the range the cheat CRC-checks,
     // so it can run after skeet_t::extra().
     bool Install() noexcept;
     void Remove() noexcept;

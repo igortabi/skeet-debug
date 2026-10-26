@@ -12,6 +12,8 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -59,6 +61,7 @@ namespace skeetsdk::voice_message
         constexpr std::uintptr_t lua_load_buffer_address = 0x43426D2Fu;
         constexpr std::uintptr_t lua_pcall_address = 0x4342D9B9u;
         constexpr int lua_registry_index = -10000;
+        constexpr int lua_type_number = 3;
         constexpr int lua_type_string = 4;
         constexpr int lua_type_table = 5;
         constexpr int lua_type_function = 6;
@@ -96,12 +99,15 @@ namespace skeetsdk::voice_message
         constexpr std::size_t incoming_sequence_bytes = 0x24;
         constexpr std::size_t incoming_section_number = 0x28;
         constexpr std::size_t incoming_sample_offset = 0x2C;
+        constexpr std::size_t incoming_has_bits = 0x34;
         constexpr std::size_t string_size = 0x10;      // MSVC std::string
         constexpr std::size_t string_capacity = 0x14;
 
         constexpr std::size_t max_bytes = 4096;  // the library's buffer
-        constexpr std::size_t max_queued = 256;
-        constexpr ULONGLONG max_queued_age_ms = 1000;  // nobody polled them in time (no script listens)
+        // Every packet is kept until it is a second old (or 512 newer ones came): each reader (voice_message,
+        // voice_packet) polls with its own cursor, so none of them takes packets away from the other.
+        constexpr std::size_t max_queued = 512;
+        constexpr ULONGLONG max_queued_age_ms = 1000;
 
         struct TValue
         {
@@ -172,6 +178,7 @@ namespace skeetsdk::voice_message
 
         struct Packet
         {
+            std::uint64_t id;
             ULONGLONG received;
             std::int32_t client;
             std::int32_t audible_mask;
@@ -183,6 +190,7 @@ namespace skeetsdk::voice_message
             std::int32_t sequence_bytes;
             std::uint32_t section_number;
             std::uint32_t sample_offset;
+            std::uint32_t has_bits;
             std::string data;
         };
 
@@ -204,22 +212,25 @@ namespace skeetsdk::voice_message
         // The handler runs on the main thread, and so do the scripts, but keep the queue safe anyway.
         SRWLOCK queue_lock = SRWLOCK_INIT;
         std::deque<Packet> queue;
+        std::uint64_t next_packet_id = 1;
 
-        // The library hands every packet with voice data to the callbacks, players talking included.
+        // Every relayed packet, with or without audio (voice_message only hands the ones with voice data to its
+        // callbacks, like the library; voice_packet hands all of them).
         void Capture(const std::uint8_t* message) noexcept
         {
             const auto* voice_data = At<const std::uint8_t*>(message, incoming_voice_data);
-            if (voice_data == nullptr) return;
-            const auto size = At<std::uint32_t>(voice_data, string_size);
-            if (size == 0) return;
-            const auto* bytes = At<std::uint32_t>(voice_data, string_capacity) < 16
+            const std::uint32_t size = voice_data != nullptr ? At<std::uint32_t>(voice_data, string_size) : 0;
+            const auto* bytes = size == 0 ? nullptr : At<std::uint32_t>(voice_data, string_capacity) < 16
                 ? voice_data : At<const std::uint8_t*>(voice_data, 0);
+            const ULONGLONG now = GetTickCount64();
             AcquireSRWLockExclusive(&queue_lock);
             try
             {
-                if (queue.size() >= max_queued) queue.pop_front();
+                while (!queue.empty() && (queue.size() >= max_queued || now - queue.front().received > max_queued_age_ms))
+                    queue.pop_front();
                 Packet& packet = queue.emplace_back();
-                packet.received = GetTickCount64();
+                packet.id = next_packet_id++;
+                packet.received = now;
                 packet.client = At<std::int32_t>(message, incoming_client);
                 packet.audible_mask = At<std::int32_t>(message, incoming_audible_mask);
                 packet.xuid_low = At<std::uint32_t>(message, incoming_xuid);
@@ -230,7 +241,9 @@ namespace skeetsdk::voice_message
                 packet.sequence_bytes = At<std::int32_t>(message, incoming_sequence_bytes);
                 packet.section_number = At<std::uint32_t>(message, incoming_section_number);
                 packet.sample_offset = At<std::uint32_t>(message, incoming_sample_offset);
-                packet.data.assign(reinterpret_cast<const char*>(bytes), std::min<std::size_t>(size, max_bytes));
+                packet.has_bits = At<std::uint32_t>(message, incoming_has_bits);
+                if (bytes != nullptr)
+                    packet.data.assign(reinterpret_cast<const char*>(bytes), std::min<std::size_t>(size, max_bytes));
             }
             catch (...)
             {
@@ -282,38 +295,75 @@ namespace skeetsdk::voice_message
             return 2;
         }
 
-        // skeetsdk._voice_poll() -> voice_data, client, audible_mask, xuid_low, xuid_high, proximity, caster,
-        // format, sequence_bytes, section_number, uncompressed_sample_offset of the oldest queued packet, or nothing.
+        // lua_State: base at +0x10, top at +0x14. index is 1-based like the Lua API.
+        bool ReadNumber(void* lua_state, int index, double& value) noexcept
+        {
+            const auto state = static_cast<const std::uint8_t*>(lua_state);
+            const auto stack_base = *reinterpret_cast<TValue* const*>(state + 0x10);
+            const auto stack_top = *reinterpret_cast<TValue* const*>(state + 0x14);
+            if (index < 1 || stack_base == nullptr || stack_top - stack_base < index) return false;
+            if (get_type(lua_state, index) != lua_type_number) return false;
+            std::memcpy(&value, stack_base + (index - 1), sizeof(value));
+            return std::isfinite(value);
+        }
+
+        // skeetsdk._voice_poll(after) -> id, voice_data, client, audible_mask, xuid_low, xuid_high, xuid (decimal
+        // string), proximity, caster, format, sequence_bytes, section_number, uncompressed_sample_offset, has_bits of
+        // the oldest packet newer than id `after` and not a second old, or nothing. Nothing is removed: every reader
+        // keeps its own `after`.
         int __cdecl NativePoll(void* lua_state) noexcept
         {
+            double after = 0.0;
+            if (!ReadNumber(lua_state, 1, after)) after = 0.0;
             Packet packet{};
             bool found = false;
             const ULONGLONG now = GetTickCount64();
             AcquireSRWLockExclusive(&queue_lock);
-            while (!queue.empty())
+            try
             {
-                packet = std::move(queue.front());
-                queue.pop_front();
-                if (now - packet.received <= max_queued_age_ms)
+                for (const Packet& queued : queue)
                 {
+                    if (static_cast<double>(queued.id) <= after || now - queued.received > max_queued_age_ms) continue;
+                    packet = queued;
                     found = true;
                     break;
                 }
             }
+            catch (...)
+            {
+                found = false;
+            }
             ReleaseSRWLockExclusive(&queue_lock);
             if (!found) return 0;
+            char xuid[24]{};
+            const std::uint64_t full_xuid = (static_cast<std::uint64_t>(packet.xuid_high) << 32) | packet.xuid_low;
+            const int xuid_length = std::snprintf(xuid, sizeof(xuid), "%llu", static_cast<unsigned long long>(full_xuid));
+            push_number(lua_state, static_cast<double>(packet.id));
             push_lstring(lua_state, packet.data.data(), packet.data.size());
             push_number(lua_state, packet.client);
             push_number(lua_state, packet.audible_mask);
             push_number(lua_state, packet.xuid_low);
             push_number(lua_state, packet.xuid_high);
+            push_lstring(lua_state, xuid, xuid_length > 0 ? static_cast<std::size_t>(xuid_length) : 0);
             PushBoolean(lua_state, packet.proximity);
             PushBoolean(lua_state, packet.caster);
             push_number(lua_state, packet.format);
             push_number(lua_state, packet.sequence_bytes);
             push_number(lua_state, packet.section_number);
             push_number(lua_state, packet.sample_offset);
-            return 11;
+            push_number(lua_state, packet.has_bits);
+            return 14;
+        }
+
+        // skeetsdk._voice_latest() -> id of the newest packet so far (0 before the first): a reader that starts
+        // here only gets packets that come after it.
+        int __cdecl NativeLatest(void* lua_state) noexcept
+        {
+            AcquireSRWLockExclusive(&queue_lock);
+            const std::uint64_t id = next_packet_id - 1;
+            ReleaseSRWLockExclusive(&queue_lock);
+            push_number(lua_state, static_cast<double>(id));
+            return 1;
         }
 
         // skeetsdk._voice_send(bytes) -> true, or false and a message (the library's send_raw)
@@ -359,7 +409,7 @@ local sdk = skeetsdk
 if type(sdk.voice_message) == "table" then return end
 if type(client) ~= "table" or type(client.set_event_callback) ~= "function" or type(client.unset_event_callback) ~= "function" then return end
 if type(bit) ~= "table" then return end
-local poll, send = sdk._voice_poll, sdk._voice_send
+local poll, send, latest = sdk._voice_poll, sdk._voice_send, sdk._voice_latest
 local set_callback, unset_callback = client.set_event_callback, client.unset_event_callback
 local error_log = type(client.error_log) == "function" and client.error_log or print
 local band, bor, bxor, lshift, rshift = bit.band, bit.bor, bit.bxor, bit.lshift, bit.rshift
@@ -505,30 +555,35 @@ local function to_bytes(buf)
 end
 
 local receive_callbacks, listening = {}, false
+local receive_cursor = 0
 
 local function dispatch()
     while true do
-        local data, client_index, audible_mask, xuid_low, xuid_high, proximity, caster, format, sequence_bytes, section_number, sample_offset = poll()
-        if data == nil then return end
-        local msg = {
-            client = client_index, entity = client_index + 1, audible_mask = audible_mask,
-            xuid_low = xuid_low, xuid_high = xuid_high, proximity = proximity, caster = caster, format = format,
-            sequence_bytes = sequence_bytes, section_number = section_number,
-            uncompressed_sample_offset = sample_offset, voice_data = data,
-        }
-        local buf = net_buffer.from_data(data)
-        local current = {}
-        for i = 1, #receive_callbacks do current[i] = receive_callbacks[i] end
-        for i = 1, #current do
-            buf:reset()
-            local ok, message = pcall(current[i], buf, msg)
-            if not ok then error_log("voice_message: " .. tostring(message)) end
+        local id, data, client_index, audible_mask, xuid_low, xuid_high, xuid, proximity, caster, format, sequence_bytes, section_number, sample_offset = poll(receive_cursor)
+        if id == nil then return end
+        receive_cursor = id
+        if #data > 0 then
+            local msg = {
+                client = client_index, entity = client_index + 1, audible_mask = audible_mask,
+                xuid = xuid, xuid_low = xuid_low, xuid_high = xuid_high, proximity = proximity, caster = caster,
+                format = format, sequence_bytes = sequence_bytes, section_number = section_number,
+                uncompressed_sample_offset = sample_offset, voice_data = data,
+            }
+            local buf = net_buffer.from_data(data)
+            local current = {}
+            for i = 1, #receive_callbacks do current[i] = receive_callbacks[i] end
+            for i = 1, #current do
+                buf:reset()
+                local ok, message = pcall(current[i], buf, msg)
+                if not ok then error_log("voice_message: " .. tostring(message)) end
+            end
         end
     end
 end
 
 local function update_listening()
     if #receive_callbacks > 0 and not listening then
+        receive_cursor = latest()
         set_callback("net_update_end", dispatch)
         listening = true
     elseif #receive_callbacks == 0 and listening then
@@ -604,6 +659,55 @@ setmetatable(voice_message, {
 })
 
 sdk.voice_message = voice_message
+
+-- client.set_event_callback("voice_packet", f): every relayed voice packet, with or without audio, every field.
+-- Any other event name goes to the game's functions unchanged (as a tail call, so they see the script as caller).
+local packet_callbacks, packet_listening, packet_cursor = {}, false, 0
+
+local function dispatch_packets()
+    while true do
+        local id, data, client_index, audible_mask, xuid_low, xuid_high, xuid, proximity, caster, format, sequence_bytes, section_number, sample_offset, has_bits = poll(packet_cursor)
+        if id == nil then return end
+        packet_cursor = id
+        local event = {
+            entity = client_index + 1, client = client_index, xuid = xuid, xuid_low = xuid_low, xuid_high = xuid_high,
+            audible_mask = audible_mask, proximity = proximity, caster = caster, format = format,
+            sequence_bytes = sequence_bytes, section_number = section_number,
+            uncompressed_sample_offset = sample_offset, has_bits = has_bits, voice_data = data,
+        }
+        local current = {}
+        for i = 1, #packet_callbacks do current[i] = packet_callbacks[i] end
+        for i = 1, #current do
+            local ok, message = pcall(current[i], event)
+            if not ok then error_log("voice_packet: " .. tostring(message)) end
+        end
+    end
+end
+
+client.set_event_callback = function(name, callback, ...)
+    if name ~= "voice_packet" then return set_callback(name, callback, ...) end
+    if type(callback) ~= "function" then error("bad argument #2 to 'set_event_callback' (function expected)", 2) end
+    for i = 1, #packet_callbacks do
+        if packet_callbacks[i] == callback then return end
+    end
+    packet_callbacks[#packet_callbacks + 1] = callback
+    if not packet_listening then
+        packet_cursor = latest()
+        set_callback("net_update_end", dispatch_packets)
+        packet_listening = true
+    end
+end
+
+client.unset_event_callback = function(name, callback, ...)
+    if name ~= "voice_packet" then return unset_callback(name, callback, ...) end
+    for i = #packet_callbacks, 1, -1 do
+        if packet_callbacks[i] == callback then remove(packet_callbacks, i) end
+    end
+    if packet_listening and #packet_callbacks == 0 then
+        unset_callback("net_update_end", dispatch_packets)
+        packet_listening = false
+    end
+end
 if type(package) == "table" and type(package.loaded) == "table" and package.loaded.voice_message == nil then
     package.loaded.voice_message = voice_message
 end
@@ -717,6 +821,8 @@ end
             set_field(lua_state, -2, "_voice_poll");
             push_cclosure(lua_state, &NativeSend, 0);
             set_field(lua_state, -2, "_voice_send");
+            push_cclosure(lua_state, &NativeLatest, 0);
+            set_field(lua_state, -2, "_voice_latest");
         }
         set_top(lua_state, -2);
         InstallClientWrapper(lua_state);

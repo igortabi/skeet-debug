@@ -179,6 +179,9 @@
     <ClInclude Include="crash_report.hpp" />
     <ClInclude Include="entity_icon.hpp" />
     <ClInclude Include="cheat_revealer.hpp" />
+    <ClInclude Include="persist.hpp" />
+    <ClInclude Include="jit_lib.hpp" />
+    <ClInclude Include="config_files.hpp" />
     <ClInclude Include="MinHook\MinHook.h" />
     <ClInclude Include="ntstructs.h" />
     <ClInclude Include="pch.h" />
@@ -222,6 +225,15 @@
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="cheat_revealer.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="persist.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="jit_lib.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
+    <ClCompile Include="config_files.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="pch.cpp">

@@ -798,9 +798,54 @@ namespace skeetsdk::config_scripts
         std::scoped_lock lock(hook_state.mutex);
         return hook_state.installed;
     }
+
+    void RefreshScriptListOnChange() noexcept
+    {
+        // The Config tab's vtable (its destructor stores it, then frees the script vector at +0x98) and its slot
+        // 13, what selecting the tab runs: the script list refresh (0x4336D863: lists the files again, rebuilds
+        // the listbox with the loaded flags) and then update_lua_info.
+        constexpr std::uintptr_t config_tab_vtable_address = 0x4346F6DCu;
+        constexpr std::size_t config_tab_on_select_slot = 13;
+        constexpr std::uintptr_t config_tab_on_select_address = 0x4332007Fu;
+        constexpr std::uintptr_t menu_pointer_address = 0x43476924u; // holds the CMenu* (see ui_tabs)
+        constexpr std::size_t menu_tabs_begin = 0x54;
+        constexpr std::size_t menu_tabs_end = 0x58;
+        using OnSelectFn = void(__thiscall*)(void*);
+
+        // A script file appearing, going or being renamed in the game folder, where the scripts are listed from.
+        static HANDLE notification = [] {
+            wchar_t executable[MAX_PATH]{};
+            const DWORD length = GetModuleFileNameW(nullptr, executable, MAX_PATH);
+            if (length == 0 || length >= MAX_PATH) return INVALID_HANDLE_VALUE;
+            std::wstring folder(executable, length);
+            folder.resize(folder.find_last_of(L'\\'));
+            return FindFirstChangeNotificationW(folder.c_str(), FALSE, FILE_NOTIFY_CHANGE_FILE_NAME);
+        }();
+        if (notification == INVALID_HANDLE_VALUE || WaitForSingleObject(notification, 0) != WAIT_OBJECT_0) return;
+        FindNextChangeNotification(notification);
+
+        const auto* menu_slot = reinterpret_cast<std::uint8_t* const*>(menu_pointer_address);
+        const auto* vtable = reinterpret_cast<const std::uintptr_t*>(config_tab_vtable_address);
+        if (!IsReadable(menu_slot, sizeof(void*)) || *menu_slot == nullptr
+            || !IsReadable(vtable + config_tab_on_select_slot, sizeof(std::uintptr_t))
+            || vtable[config_tab_on_select_slot] != config_tab_on_select_address) return;
+        std::uint8_t* menu = *menu_slot;
+        if (!IsReadable(menu + menu_tabs_begin, 2 * sizeof(void*))) return;
+        void** const first = At<void**>(menu, menu_tabs_begin);
+        void** const last = At<void**>(menu, menu_tabs_end);
+        if (first == nullptr || last < first || !IsReadable(first, (last - first) * sizeof(void*))) return;
+        for (void** tab = first; tab != last; ++tab)
+        {
+            if (*tab == nullptr || !IsReadable(*tab, sizeof(void*))
+                || *static_cast<const std::uintptr_t*>(*tab) != config_tab_vtable_address) continue;
+            reinterpret_cast<OnSelectFn>(config_tab_on_select_address)(*tab);
+            return;
+        }
+    }
 #else
     bool Install() noexcept { return false; }
     void Remove() noexcept {}
     bool IsInstalled() noexcept { return false; }
+    void RefreshScriptListOnChange() noexcept {}
 #endif
 }

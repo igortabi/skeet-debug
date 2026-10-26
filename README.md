@@ -53,6 +53,10 @@ Saving a config with the Save button also stores which scripts are loaded. Loadi
 
 Configs saved without this carry no list and leave your scripts alone. The list sits at the end of the config, so clipboard exports and `config.export` do not carry it, and `config.load` called from a script does not change which scripts are loaded. Controls that share a name and type inside one script all read the same saved value (the game finds a value by the hash of the name), which is a limit of the config format.
 
+## The script list follows the folder
+
+The Config tab used to list the script files only when you selected it, so a script you added, deleted or renamed showed up only after switching to another tab and back. Now the list updates by itself when a file in the game folder is added, removed or renamed: the DLL watches the folder and runs what selecting the tab runs (the tab's own refresh, vtable `0x4346F6DC` slot 13), so the loaded marks and the selected script's info stay right.
+
 ## Script-made tabs
 
 ```lua
@@ -218,7 +222,31 @@ end)
 - The server relays a packet only to the players who can hear you: your team, unless the server has all-talk (`sv_alltalk`, `sv_full_alltalk`, `sv_deadtalk`, ...), and only with `sv_voiceenable 1`.
 - Packets are delivered on `net_update_end` (the library calls the callbacks inside the engine's handler), so callbacks run on the game's main thread like every other event. Every callback gets the same buffer, reset in between; one that errors is reported and the others still run.
 
-How it works: `send` builds the game's own `CCLCMsg_VoiceData` with the bytes as its voice data and format `VOICEDATA_FORMAT_STEAM`, and hands it to the net channel. The library sends it on the net channel's voice stream; the port sends it the way the game's own voice sender does, because a client never sets that stream up and a message sent on it makes the engine drop the connection ("Buffer overflow in send net message"). A hook on the client's handler of relayed packets (`CClientState::SVCMsg_VoiceData` in engine.dll, found by signature) queues the ones with voice data for the scripts. `tools/voice_message_test.lua` is the in-game test script.
+How it works: `send` builds the game's own `CCLCMsg_VoiceData` with the bytes as its voice data and format `VOICEDATA_FORMAT_STEAM`, and hands it to the net channel. The library sends it on the net channel's voice stream; the port sends it the way the game's own voice sender does, because a client never sets that stream up and a message sent on it makes the engine drop the connection ("Buffer overflow in send net message"). A hook on the client's handler of relayed packets (`CClientState::SVCMsg_VoiceData` in engine.dll, found by signature) queues every packet for the scripts. `tools/voice_message_test.lua` is the in-game test script.
+
+### Every voice packet: the `voice_packet` event
+
+```lua
+client.set_event_callback("voice_packet", function(e)
+    print(entity.get_player_name(e.entity), e.xuid, e.sequence_bytes, e.section_number, #e.voice_data)
+end)
+```
+
+Fires for every voice packet the server relays, with or without audio, on `net_update_end`. `unset_event_callback("voice_packet", f)` removes it.
+
+| Field | |
+|---|---|
+| `entity`, `client` | the sender's entity index, and its player slot (`entity - 1`) |
+| `xuid` | the packet's 64-bit `xuid` as a decimal string (a SteamID64 when it is one) |
+| `xuid_low`, `xuid_high` | the same as two 32-bit numbers |
+| `audible_mask`, `proximity`, `caster`, `format` | as the server sent them (`proximity` and `caster` are booleans) |
+| `sequence_bytes`, `section_number`, `uncompressed_sample_offset` | as the server sent them |
+| `has_bits` | which optional fields the packet carries (protobuf has-bits: 1 client, 2 proximity, 4 xuid, 8 audible_mask, 16 voice_data, 32 caster, 64 format, 128 sequence_bytes, 256 section_number, 512 uncompressed_sample_offset) |
+| `voice_data` | the audio bytes, `""` when there are none |
+
+This is what the gamesense `voice` event gives as a pointer, decoded, with no FFI needed. Packets wait at most a second for a reader, so a callback set later doesn't get older ones.
+
+`tools/voice_packet_test.lua` prints every packet. Something has to send packets for it to print anything: other players talking or running cheats, or its own test packet, which comes back to you with `voice_loopback 1`.
 
 ## Scoreboard icons
 
@@ -248,9 +276,65 @@ Cheat_revealer.lua is built in: it tells which cheat other players use from the 
 
 - **VISUALS > Player ESP:** "Cheat revealer", with its display options (Scoreboard icon, Flag) and icon set (Multicolored, Unicolored, Nado & Ryha, Alternative NL icon).
 - **PLAYERS > Adjustments:** "Cheat: ..." for the player selected in the player list.
+- Detections are remembered by SteamID (`skeetsdk.persist("cheat_revealer")`), so loading or unloading scripts, rejoining or a map change doesn't make the revealer start over: a player gets their cheat back as soon as they are seen. `clear_data(player)` forgets it. Nothing is kept after the game closes.
 - Scripts get what the script gave them: the `cheat_detected` event (`player`, `cheat_id`, `cheat_long`, `cheat_color`) and `require("gamesense/cheat_revealer")` with `get_cheat(player)`, `has_data(player)` and `clear_data(player)`. `cheat_color` is a `{ r, g, b, a }` table with an `unpack()` method instead of a `gamesense/color` object.
 
 The detection is the script's, unchanged. It needs no workshop library: the controls are made with `ui.*`, the icons are shown with `entity.set_icon`, and the three icon sets (from [dave3x8/revealer-icons](https://github.com/dave3x8/revealer-icons), `skeet/third_party/revealer_icons`) are embedded into skeet.dll (`revealer_icons.rc`) instead of being downloaded. It works with no script loaded: the cheat only has a Lua state while scripts are loaded, so when there is none the DLL makes one every frame before `paint_ui`, with the cheat's own function for it, and installs the built-in Lua additions into it (`lua_guard::KeepStateAlive`).
+
+## Storage that survives script reloads
+
+Loading or unloading any script closes the whole Lua state, so every script loses its variables. `skeetsdk.persist` keeps values in skeet.dll instead, and they come back in the next state:
+
+```lua
+local data = skeetsdk.persist("my_script")   -- a store for that namespace
+
+data.loads = (data.loads or 0) + 1           -- written at once
+data.settings = { color = { 255, 0, 0 }, enabled = true }
+data.loads = nil                             -- removed
+
+skeetsdk.persist.keys("my_script")           -- { "settings", ... }, sorted
+skeetsdk.persist.clear("my_script")          -- removes everything in it
+```
+
+- Namespaces and keys are strings of 1 to 256 bytes. Use your script's name as the namespace so scripts don't overwrite each other.
+- Values are `nil`, booleans, numbers (`inf` and `nan` too), strings (any bytes) and tables of those, with string, number or boolean keys. Functions, userdata, cdata, threads, tables that contain themselves and tables nested more than 64 levels deep raise an error at the assignment.
+- Reading gives a copy: after changing a nested table, assign it again (`data.settings = settings`) to keep the change.
+- Everything together is limited to 64 MB. Values last until the game closes; nothing is written to disk.
+
+`tools/persist_test.lua` is the in-game test script.
+
+## The jit table
+
+gamesense's `jit` table only had `on`, `off`, `flush`, `status` and `attach`: the cheat's `luaopen_jit` still sets up the JIT, but no longer pushes the version fields or registers `jit.opt`. They are back:
+
+```lua
+print(jit.version, jit.version_num, jit.os, jit.arch)   -- LuaJIT 2.1.0-beta3  20100  Windows  x86
+
+jit.opt.start(3)                         -- optimization level 0 to 3
+jit.opt.start("-fold", "nocse", "sink")  -- flags on (+name, name) or off (-name, noname)
+jit.opt.start("hotloop=100", "maxtrace=2000")
+jit.opt.start()                          -- default flags (-O3)
+```
+
+- `jit.opt.start` works like LuaJIT 2.1's on the engine's own settings, and raises an error for an option it doesn't know. The flags are `fold cse dce fwd dse narrow loop abc sink fuse`; the parameters `maxtrace maxrecord maxirconst maxside maxsnap minstitch hotloop hotexit tryside instunroll loopunroll callunroll recunroll sizemcode maxmcode`. `jit.status()` shows the result.
+- `require("jit.opt")` returns `jit.opt`.
+- The settings are shared by every script and stay until the game closes.
+- `jit.util` is not included: it hands out any function's bytecode and constants, which is exactly what obfuscated scripts hide.
+- `jit.attach` is there but always raises "vmevent API disabled": the cheat's LuaJIT is built without VM events, so there is nothing to attach to.
+
+`tools/jit_test.lua` is the in-game test script.
+
+## Configs as files
+
+Configs are kept as files in `Counter-Strike Global Offensive\skeet\configs\`, one `<name>.cfg` per config, so you can back them up, share them or delete them like any file:
+
+- **Saving or deleting a config in the menu** updates the folder within a frame.
+- **Copying a `.cfg` in, editing or renaming one, or deleting one** updates the menu's config list right away.
+- Characters a file name cannot have are written as `%XX` (a config named `a:b` is `a%3Ab.cfg`). Config keys are kept in `keys.txt` next to them.
+- A file that isn't a config (it has to start with the config signature) is left alone and never deleted.
+- The first time, the folder gets every config you already have. Your old config file is kept once as `csgo\cfg\<id>.cfg.skeetsdk-backup`.
+
+How it works: the cheat keeps all configs in one file, `csgo\cfg\<id>.cfg` (its path is at `0x434798CC`), which it reads again for every load and rewrites for every save or delete: `0xAF`, then per config the name, the data and the key slot. Nothing in the cheat is patched: every frame the DLL compares that file and the folder with what it last saw, writes the side that is behind, and after rebuilding the cheat's file from the folder reloads the Config tab's list (`0x4335C747`, what the Save button runs).
 
 ## For contributors: hooking game code
 

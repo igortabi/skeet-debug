@@ -197,6 +197,33 @@ local colored_names = {
 
 local users = {}
 
+-- Detections are remembered by SteamID in skeetsdk.persist, so they survive script reloads (every script load or
+-- unload starts a new Lua state), rejoins and map changes: a player gets their cheat back as soon as they are seen.
+local memory = type(sdk.persist) == "table" and sdk.persist("cheat_revealer") or nil
+
+local function memory_key(target)
+    if memory == nil then return nil end
+    local ok, steam_id = pcall(entity.get_steam64, target)
+    steam_id = ok and steam_id ~= nil and tostring(steam_id) or ""
+    if steam_id == "" or steam_id == "0" then return nil end
+    return "player:" .. steam_id
+end
+
+local function new_user(target)
+    local user = {}
+    local key = memory_key(target)
+    if key ~= nil then
+        local cheat = memory[key]
+        if type(cheat) == "string" and names[cheat] ~= nil then user.cheat = cheat end
+    end
+    return user
+end
+
+local function remember(target, cheat)
+    local key = memory_key(target)
+    if key ~= nil then memory[key] = cheat end
+end
+
 local main = ui.new_checkbox(tab, container, "Cheat revealer")
 local display_method = ui.new_multiselect(tab, container, "\nCheat revealer display options", "Scoreboard icon", "Flag")
 local icon_items = { "Multicolored", "Unicolored", "Nado & Ryha", "Alternative NL icon" }
@@ -632,7 +659,7 @@ client.set_event_callback("paint", function()
                 user.icon_set = true
             end
         else
-            users[target] = {}
+            users[target] = new_user(target)
         end
     end
 end)
@@ -657,7 +684,7 @@ client.set_event_callback("voice", function(event)
     local packet = ffi.cast(voice_data_t, event.data)
     local target = (ffi.cast("char*", packet) + 8)[0] + 1
     if not users[target] then
-        users[target] = {}
+        users[target] = new_user(target)
     end
 
     local user = users[target]
@@ -672,6 +699,7 @@ client.set_event_callback("voice", function(event)
 
                 if cheat_detection_function(packet, target) then
                     user.cheat = cheat_identifier
+                    remember(target, cheat_identifier)
                     user.icon_set = false
 
                     if ((user.cheat or "wh") == "wh" or cheat ~= cheat_identifier) and type(client.fire_event) == "function" then
@@ -697,7 +725,7 @@ client.set_event_callback("player_connect_full", function(event)
     if target == entity.get_local_player() then
         users = {}
     elseif target ~= nil then
-        users[target] = {}
+        users[target] = new_user(target)
         for _, detection in pairs(detection_storage_table) do
             if type(detection) == "table" then detection[target] = nil end
         end
@@ -734,6 +762,8 @@ if type(package) == "table" and type(package.preload) == "table" then
                     return false
                 end
 
+                local key = memory_key(target)
+                if key ~= nil then memory[key] = nil end
                 users[target] = nil
 
                 for _, detection in pairs(detection_storage_table) do

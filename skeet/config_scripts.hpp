@@ -12,4 +12,10 @@ namespace skeetsdk::config_scripts
     bool Install() noexcept;
     void Remove() noexcept;
     bool IsInstalled() noexcept;
+
+    // The Config tab lists the script files only when it is selected, so a script added, deleted or renamed
+    // showed up only after switching to another tab and back. This watches the game folder and, when a file
+    // name changed there, runs what selecting the tab runs. Patches nothing; call it every frame on the game's
+    // thread (renderer_blur does, right before paint_ui).
+    void RefreshScriptListOnChange() noexcept;
 }

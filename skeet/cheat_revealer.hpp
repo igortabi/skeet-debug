@@ -13,6 +13,8 @@ namespace skeetsdk::cheat_revealer
     // cheat_color }) and require("gamesense/cheat_revealer") with get_cheat(player), has_data(player) and
     // clear_data(player). cheat_color is { r, g, b, a } with an unpack() method instead of a gamesense/color object.
     //
+    // Detections are remembered by SteamID in skeetsdk.persist("cheat_revealer"), so they survive script reloads,
+    // rejoins and map changes (not a game restart); clear_data forgets them.
     // The detection is the script's, unchanged. The icons are embedded into skeet.dll (revealer_icons.rc) instead
     // of being downloaded, and are shown with entity.set_icon (entity_icon.hpp), so no workshop library is needed.
     //
